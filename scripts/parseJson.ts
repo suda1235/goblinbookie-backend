@@ -1,95 +1,73 @@
-import path from 'path';
 import fs from 'fs';
-import { readJsonFile, writeJsonFile, log, logError } from '../src/utils/jsonHelpers';
+import path from 'path';
+import { chain } from 'stream-chain';
+import { parser } from 'stream-json';
+import { pick } from 'stream-json/filters/Pick';
+import { streamObject } from 'stream-json/streamers/StreamObject';
+import { writeJsonFile, log, logError } from '../src/utils/jsonHelpers';
 
-// Typing our card format for our used data
-type ParsedCard = {
-  uuid: string;
-  scryfallId?: string;
-  name: string;
-  setCode: string;
-  collectorNumber: string;
-  prices: {
-    tcgplayer?: number;
-    cardmarket?: number;
-    cardkingdom?: number;
-  };
-  purchaseUrls?: {
-    tcgplayer?: string;
-    cardmarket?: string;
-    cardkingdom?: string;
-  };
-};
-// File paths
-const printingsPath = path.join(__dirname, '../temp/AllPrintings.json');
-const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
+const inputPath = path.join(__dirname, '../temp/AllIdentifiers.json');
 const outputPath = path.join(__dirname, '../data/parsedCards.json');
 
-async function parseAndCleanJson() {
-  try {
-    log('Reading MTGJSON files...');
+interface ParsedCard {
+  uuid: string;
+  name: string;
+  setCode: string;
+  language: string;
+  scryfallId?: string;
+  purchaseUrls?: Record<string, string>;
+}
 
-    const allPrintings = await readJsonFile(printingsPath, { streamKey: 'data' });
-    const allPrices = await readJsonFile(pricesPath, { streamKey: 'data' });
-
+// main function for parsing
+async function parseIdentifiersFile(): Promise<ParsedCard[]> {
+  return new Promise((resolve, reject) => {
     const parsedCards: ParsedCard[] = [];
 
-    let setCount = 0;
-    const totalSets = Object.keys(allPrintings.data).length;
-    let cardCount = 0;
+    let processed = 0;
+    let kept = 0;
 
-    for (const setCode in allPrintings.data) {
-      setCount++;
-      if (setCount % 10 === 0) {
-        const percent = ((setCount / totalSets) * 100).toFixed(1);
-        log(`Parsed ${setCount}/${totalSets} sets (${percent}%) — ${cardCount} cards so far`);
+    const pipeline = chain([
+      fs.createReadStream(inputPath),
+      parser(),
+      pick({ filter: 'data' }),
+      streamObject(),
+    ]);
+
+    pipeline.on('data', ({ key, value }) => {
+      processed++;
+
+      if (value.language !== 'English') return;
+
+      const card: ParsedCard = {
+        uuid: value.uuid,
+        name: value.name,
+        setCode: value.setCode,
+        language: value.language,
+        scryfallId: value.scryfallId,
+        purchaseUrls: value.purchaseUrls,
+      };
+
+      parsedCards.push(card);
+      kept++;
+    });
+
+    pipeline.on('end', async () => {
+      try {
+        log(`Streamed ${processed} cards, kept ${kept}`);
+        await writeJsonFile(outputPath, parsedCards);
+        resolve(parsedCards);
+      } catch (err) {
+        reject(err);
       }
-      const set = allPrintings.data[setCode];
-      if (!Array.isArray(set.cards)) continue;
-      for (const card of set.cards) {
-        // Filter for only English cards
-        if (card.languages && !card.languages.includes('English')) continue;
+    });
 
-        const uuid = card.uuid;
-        const priceEntry = allPrices.data?.[uuid].paper;
-        if (!priceEntry) continue;
-
-        const getLatest = (vendor: any): number | undefined =>
-          vendor?.retail?.normal
-            ? (Object.values(vendor.retail.normal).pop() as number)
-            : undefined;
-
-        const parsed: ParsedCard = {
-          uuid,
-          scryfallId: card.scryfallId,
-          name: card.name,
-          setCode: set.code,
-          collectorNumber: card.number,
-          prices: {
-            tcgplayer: getLatest(priceEntry.tcgplayer),
-            cardkingdom: getLatest(priceEntry.cardkingdom),
-            cardmarket: getLatest(priceEntry.cardmarket),
-          },
-          purchaseUrls: {
-            tcgplayer: card.purchaseUrls?.tcgplayer,
-            cardmarket: card.purchaseUrls?.cardmarket,
-            cardkingdom: card.purchaseUrls?.cardKingdom,
-          },
-        };
-
-        parsedCards.push(parsed);
-        cardCount++;
-      }
-    }
-    log(`Parsed ${parsedCards.length} cards. Writing to Output...`);
-    await writeJsonFile(outputPath, parsedCards);
-
-    fs.unlinkSync(printingsPath);
-    fs.unlinkSync(pricesPath);
-    log(`Deleted raw JSON  files from /temp`);
-    log(`Output saved to: ${outputPath}`);
-  } catch (err) {
-    logError(`Failed to parse MTGJSON files:`, err);
-  }
+    pipeline.on('error', (err) => {
+      logError(`Pipeline failed: ${err}`);
+      reject(err);
+    });
+  });
 }
-parseAndCleanJson();
+
+parseIdentifiersFile().catch((err) => {
+  logError(`ParsedIdentifiersFile Failed: ${err}`);
+});
