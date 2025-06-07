@@ -1,18 +1,30 @@
+/**
+ * Daily Data Downloader
+ *
+ * This script downloads the two main MTGJSON files needed
+ * for the daily card and price update process:
+ *
+ * - AllIdentifiers.json → full list of card printings (used to extract basic card metadata)
+ * - AllPrices.json → historical + current price data for each card
+ *
+ * Files are saved to the /temp directory for processing by later scripts.
+ * The download uses automatic retries to handle network flakiness.
+ */
+
 import { DownloaderHelper } from 'node-downloader-helper';
 import path from 'path';
 import { log, logError } from '../src/utils/jsonHelpers';
 
+const destinationDir = path.join(__dirname, '../temp');
+
 /**
- * Downloads a single file from the given MTGJSON URL and saves it to the /temp directory.
- * Retries on failure up to 3 times with a 2-second delay between attempts.
+ * Helper function to download a file and retry on failure
  */
 function downloadFile(url: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const destinationDir = path.join(__dirname, '../temp');
-
     const dl = new DownloaderHelper(url, destinationDir, {
       fileName: filename,
-      retry: { maxRetries: 3, delay: 2000 },
+      retry: { maxRetries: 3, delay: 2000 }, // Retry if the download fails
     });
 
     dl.on('end', () => {
@@ -30,17 +42,16 @@ function downloadFile(url: string, filename: string): Promise<void> {
 }
 
 /**
- * Downloads the current versions of AllPrices.json and AllIdentifiers.json from MTGJSON.
- * These files are required for price parsing and card identification.
+ * Main download routine – fetch both MTGJSON files sequentially
  */
 (async () => {
   try {
-    log('Starting downloadJson...');
+    log(`Starting daily download...`);
 
-    await downloadFile('https://mtgjson.com/api/v5/AllPrices.json', 'AllPrices.json');
     await downloadFile('https://mtgjson.com/api/v5/AllIdentifiers.json', 'AllIdentifiers.json');
+    await downloadFile('https://mtgjson.com/api/v5/AllPrices.json', 'AllPrices.json');
 
-    log('Finished downloading MTGJSON files.');
+    log('Finished downloading MTGJSON daily files.');
   } catch (err) {
     logError(`Download process failed: ${err}`);
   }

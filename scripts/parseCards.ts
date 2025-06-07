@@ -1,3 +1,25 @@
+/**
+ * Card Metadata Parser
+ *
+ * This script processes `AllIdentifiers.json` from MTGJSON and extracts only English-language cards.
+ *
+ * It outputs a simplified array of card metadata objects to `parsedCards.json`, including:
+ * - uuid (MTGJSON's unique card ID)
+ * - name (card name)
+ * - setCode (short set identifier)
+ * - language (filtered to only 'English')
+ * - scryfallId (used for a seperate API to get images of the cards, will use this key later)
+ * - purchaseUrls (vendor links)
+ *
+ * Why this matters:
+ * - It defines the master list of which cards we care about for pricing
+ * - This output is used as the foundation for merging with price data later
+ *
+ * Efficiency:
+ * - Uses stream-based JSON parsing to handle large MTGJSON files safely
+ * - Keeps memory usage low even with 100k+ entries
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { chain } from 'stream-chain';
@@ -35,13 +57,13 @@ async function parseCards(): Promise<ParsedCard[]> {
       fs.createReadStream(inputPath),
       parser(),
       pick({ filter: 'data' }),
-      streamObject(),
+      streamObject(), // stream key-value pairs inside "data" object
     ]);
 
     pipeline.on('data', ({ value }) => {
       processed++;
 
-      // Only keep English-language printings
+      // Skip non-English printings to reduce unnecessary DB bloat
       if (value.language !== 'English') return;
 
       const card: ParsedCard = {

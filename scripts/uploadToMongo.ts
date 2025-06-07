@@ -1,3 +1,21 @@
+/**
+ * Database Upload Script
+ *
+ * This script streams the mergedCards.json file (containing card metadata + today's prices),
+ * and performs batched upserts into MongoDB. New cards are inserted; existing cards are
+ * updated by adding new price entries keyed by date.
+ *
+ * Why this exists:
+ * - Enables efficient, batched insertion/updating of the full dataset (90k+ cards)
+ * - Ensures price history is additive — never overwrites existing historical data
+ * - Handles large data with streaming and batching for memory efficiency
+ *
+ * Implementation notes:
+ * - Uses Mongoose's `bulkWrite` with `$setOnInsert` and `$set` for smart upsert behavior
+ * - `flattenPaperPrices` maps nested vendor/type/finish/date structure into dot-notated update paths
+ * - Card metadata is written only on insert; prices are written daily
+ */
+
 import path from 'path';
 import fs from 'fs';
 import mongoose from 'mongoose';
@@ -17,10 +35,39 @@ const BATCH_SIZE = 1000;
 if (!MONGO_URI) throw new Error('Missing MONGO_URI');
 
 /**
- * Streams mergedCards.json and uploads card data to MongoDB.
- * - New cards: inserts full document
- * - Existing cards: merges new price paths
- * - Falls back to full price blob if no granular diffs found
+ * Converts nested price structure into flat dot-notated MongoDB update paths
+ */
+function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
+  const updates: Record<string, number | string> = {};
+
+  for (const vendor of Object.keys(paperPrices)) {
+    const priceList = paperPrices[vendor];
+
+    if (priceList.currency) {
+      updates[`prices.paper.${vendor}.currency`] = priceList.currency;
+    }
+
+    for (const type of ['retail', 'buylist']) {
+      if (!priceList[type]) continue;
+
+      for (const finish of ['normal', 'foil', 'etched']) {
+        const dateMap = priceList[type][finish];
+        if (!dateMap || typeof dateMap !== 'object') continue;
+
+        for (const [date, price] of Object.entries(dateMap)) {
+          if (typeof price === 'number') {
+            updates[`prices.paper.${vendor}.${type}.${finish}.${date}`] = price;
+          }
+        }
+      }
+    }
+  }
+
+  return updates;
+}
+
+/**
+ * Streams mergedCards.json and performs batched upserts into MongoDB
  */
 async function uploadToMongo() {
   try {
@@ -28,40 +75,30 @@ async function uploadToMongo() {
     await mongoose.connect(MONGO_URI);
 
     log('Streaming mergedCards.json...');
-
     let buffer: any[] = [];
     let uploaded = 0;
 
+    // Writes the current buffer of cards to Mongo in a bulk upsert operation
     const flushBuffer = async () => {
       if (buffer.length === 0) return;
 
       const operations = buffer.map((card) => {
-        const update: any = {
-          $setOnInsert: {
-            uuid: card.uuid,
-            name: card.name,
-            setCode: card.setCode,
-            language: card.language,
-            scryfallId: card.scryfallId,
-            purchaseUrls: card.purchaseUrls,
-          },
-          $set: {},
-        };
-
-        // Attempt granular update of price data by vendor/type/finish/date
-        if (card.prices) {
-          update.$set.prices = card.prices; // Always store full price object
-        }
-
-        // Fallback: if no granular diffs found, insert full prices object
-        if (Object.keys(update.$set).length === 0 && card.prices) {
-          update.$set.prices = card.prices;
-        }
+        const priceUpdates = flattenPaperPrices(card.prices);
 
         return {
           updateOne: {
             filter: { uuid: card.uuid },
-            update,
+            update: {
+              $setOnInsert: {
+                uuid: card.uuid,
+                name: card.name,
+                setCode: card.setCode,
+                language: card.language,
+                scryfallId: card.scryfallId,
+                purchaseUrls: card.purchaseUrls,
+              },
+              $set: priceUpdates,
+            },
             upsert: true,
           },
         };
@@ -69,7 +106,6 @@ async function uploadToMongo() {
 
       await Card.bulkWrite(operations);
       uploaded += buffer.length;
-      log(`Uploaded ${uploaded} cards...`);
       buffer = [];
     };
 
