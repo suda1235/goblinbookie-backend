@@ -1,40 +1,47 @@
 import { DownloaderHelper } from 'node-downloader-helper';
 import path from 'path';
+import { log, logError } from '../src/utils/jsonHelpers';
 
+/**
+ * Downloads a single file from the given MTGJSON URL and saves it to the /temp directory.
+ * Retries on failure up to 3 times with a 2-second delay between attempts.
+ */
 function downloadFile(url: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const dl = new DownloaderHelper(url, path.join(__dirname, '../temp'), {
+    const destinationDir = path.join(__dirname, '../temp');
+
+    const dl = new DownloaderHelper(url, destinationDir, {
       fileName: filename,
       retry: { maxRetries: 3, delay: 2000 },
     });
+
     dl.on('end', () => {
-      console.log(`Downloaded ${filename}`);
+      log(`Downloaded ${filename}`);
       resolve();
     });
 
     dl.on('error', (err) => {
-      console.log(`Failed to download ${filename}:`, err);
+      logError(`Failed to download ${filename}: ${err}`);
       reject(err);
-    });
-
-    dl.on('progress', (stats) => {
-      const percent = stats.progress.toFixed(2);
-      process.stdout.write(`\r ${filename}: ${percent}%`);
     });
 
     dl.start();
   });
 }
 
+/**
+ * Downloads the current versions of AllPrices.json and AllIdentifiers.json from MTGJSON.
+ * These files are required for price parsing and card identification.
+ */
 (async () => {
   try {
-    console.log('Starting MTGJSON downloads...');
+    log('Starting downloadJson...');
 
     await downloadFile('https://mtgjson.com/api/v5/AllPrices.json', 'AllPrices.json');
     await downloadFile('https://mtgjson.com/api/v5/AllIdentifiers.json', 'AllIdentifiers.json');
 
-    console.log('All Downloads Complete.');
+    log('Finished downloading MTGJSON files.');
   } catch (err) {
-    console.error('Download process failed:', err);
+    logError(`Download process failed: ${err}`);
   }
 })();

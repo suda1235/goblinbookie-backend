@@ -7,8 +7,9 @@ import { streamObject } from 'stream-json/streamers/StreamObject';
 import { writeJsonFile, log, logError } from '../src/utils/jsonHelpers';
 
 const inputPath = path.join(__dirname, '../temp/AllIdentifiers.json');
-const outputPath = path.join(__dirname, '../data/parsedCards.json');
+const outputPath = path.join(__dirname, '../temp/parsedCards.json');
 
+// Interface describing the fields we want to keep for each card
 interface ParsedCard {
   uuid: string;
   name: string;
@@ -18,11 +19,15 @@ interface ParsedCard {
   purchaseUrls?: Record<string, string>;
 }
 
-// main function for parsing
-async function parseIdentifiersFile(): Promise<ParsedCard[]> {
+/**
+ * Parses AllIdentifiers.json from MTGJSON and extracts only the English-language cards.
+ * Saves a simplified list of card metadata to parsedCards.json.
+ */
+async function parseCards(): Promise<ParsedCard[]> {
   return new Promise((resolve, reject) => {
-    const parsedCards: ParsedCard[] = [];
+    log('Starting parseCards...');
 
+    const parsedCards: ParsedCard[] = [];
     let processed = 0;
     let kept = 0;
 
@@ -33,9 +38,10 @@ async function parseIdentifiersFile(): Promise<ParsedCard[]> {
       streamObject(),
     ]);
 
-    pipeline.on('data', ({ key, value }) => {
+    pipeline.on('data', ({ value }) => {
       processed++;
 
+      // Only keep English-language printings
       if (value.language !== 'English') return;
 
       const card: ParsedCard = {
@@ -53,8 +59,8 @@ async function parseIdentifiersFile(): Promise<ParsedCard[]> {
 
     pipeline.on('end', async () => {
       try {
-        log(`Streamed ${processed} cards, kept ${kept}`);
-        await writeJsonFile(outputPath, parsedCards);
+        log(`Finished. Processed ${processed}, kept ${kept}`);
+        await writeJsonFile(outputPath, parsedCards, true);
         resolve(parsedCards);
       } catch (err) {
         reject(err);
@@ -62,12 +68,12 @@ async function parseIdentifiersFile(): Promise<ParsedCard[]> {
     });
 
     pipeline.on('error', (err) => {
-      logError(`Pipeline failed: ${err}`);
+      logError(`parseCards stream failed: ${err}`);
       reject(err);
     });
   });
 }
 
-parseIdentifiersFile().catch((err) => {
-  logError(`ParsedIdentifiersFile Failed: ${err}`);
+parseCards().catch((err) => {
+  logError(`parseCards failed: ${err}`);
 });

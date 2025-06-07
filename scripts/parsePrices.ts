@@ -4,7 +4,11 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { writeJsonFile, log, logError } from '../src/utils/jsonHelpers';
+import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
+
+const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
+const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
+const outputPath = path.join(__dirname, '../temp/parsedPrices.json');
 
 type PricePoints = {
   etched?: Record<string, number>;
@@ -18,32 +22,29 @@ type PriceList = {
   retail?: PricePoints;
 };
 
-type PriceFormats = {
-  mtgo?: Record<'cardhoarder', PriceList>;
-  paper?: Partial<Record<'tcgplayer' | 'cardkingdom' | 'cardmarket', PriceList>>;
-};
-
 type ParsedCardPrice = {
   uuid: string;
   prices: Partial<Record<'tcgplayer' | 'cardkingdom' | 'cardmarket', PriceList>>;
 };
 
-const cardsPath = path.join(__dirname, '../data/parsedCards.json');
-const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
-const outputPath = path.join(__dirname, '../data/parsedPrices.json');
+/**
+ * Streams AllPrices.json and writes matched price data directly to parsedPrices.json.
+ * This avoids memory limits by not storing all price entries in RAM.
+ */
+async function parsePrices(): Promise<void> {
+  log('Starting parsePrices...');
 
-async function parsePricesFile(): Promise<void> {
   const parsedCardsRaw = await fs.promises.readFile(cardsPath, 'utf8');
   const parsedCards = JSON.parse(parsedCardsRaw) as { uuid: string }[];
-
   const targetUuids = new Set(parsedCards.map((c) => c.uuid));
+
   const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
   writeStream.write('[\n');
-  let first = true;
 
   return new Promise((resolve, reject) => {
     let processed = 0;
     let kept = 0;
+    let first = true;
 
     const pipeline = chain([
       fs.createReadStream(pricesPath),
@@ -57,8 +58,7 @@ async function parsePricesFile(): Promise<void> {
       const uuid = key;
 
       if (!targetUuids.has(uuid)) return;
-
-      const paperPrices: PriceFormats['paper'] = value?.paper;
+      const paperPrices = value?.paper;
       if (!paperPrices) return;
 
       const { tcgplayer, cardkingdom, cardmarket } = paperPrices;
@@ -68,26 +68,19 @@ async function parsePricesFile(): Promise<void> {
         prices: { tcgplayer, cardkingdom, cardmarket },
       };
 
-      const json = JSON.stringify(entry, null, 2);
-
-      if (!first) {
-        writeStream.write(',\n');
-      }
+      const json = JSON.stringify(entry);
+      if (!first) writeStream.write(',\n');
       writeStream.write(json);
       first = false;
-
       kept++;
-      if (kept <= 3) {
-        log(`Matched ${uuid}`);
-        console.dir({ tcgplayer, cardkingdom, cardmarket }, { depth: 2 });
-      }
     });
 
     pipeline.on('end', async () => {
       try {
-        log(`Finished. Processed ${processed}, kept ${kept}`);
         writeStream.write('\n]\n');
         writeStream.end();
+        await waitForStreamFinish(writeStream);
+        log(`Finished. Processed ${processed}, kept ${kept}`);
         resolve();
       } catch (err) {
         reject(err);
@@ -95,12 +88,12 @@ async function parsePricesFile(): Promise<void> {
     });
 
     pipeline.on('error', (err) => {
-      logError(`Pricing parsing failed: ${err}`);
+      logError(`parsePrices stream failed: ${err}`);
       reject(err);
     });
   });
 }
 
-parsePricesFile().catch((err) => {
-  logError(`parsePricesFile failed: ${err}`);
+parsePrices().catch((err) => {
+  logError(`parsePrices failed: ${err}`);
 });
