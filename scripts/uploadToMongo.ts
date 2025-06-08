@@ -33,6 +33,9 @@ const inputPath = path.join(__dirname, '../temp/mergedCards.json');
 
 if (!MONGO_URI) throw new Error('Missing MONGO_URI');
 
+/**
+ * Flattens nested price structure into MongoDB dot-notation update paths
+ */
 function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   const updates: Record<string, number | string> = {};
 
@@ -44,11 +47,9 @@ function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
 
     for (const type of ['retail', 'buylist']) {
       if (!priceList[type]) continue;
-
       for (const finish of ['normal', 'foil', 'etched']) {
         const dateMap = priceList[type][finish];
         if (!dateMap || typeof dateMap !== 'object') continue;
-
         for (const [date, price] of Object.entries(dateMap)) {
           if (typeof price === 'number') {
             updates[`prices.paper.${vendor}.${type}.${finish}.${date}`] = price;
@@ -61,6 +62,9 @@ function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   return updates;
 }
 
+/**
+ * Streams mergedCards.json and performs individual upserts into MongoDB
+ */
 async function uploadToMongo() {
   try {
     log('Connecting to MongoDB...');
