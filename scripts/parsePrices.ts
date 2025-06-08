@@ -24,6 +24,7 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
+import { streamArray } from 'stream-json/streamers/StreamArray';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
@@ -53,9 +54,18 @@ type ParsedCardPrice = {
 async function parsePrices(): Promise<void> {
   log('Starting parsePrices...');
 
-  const parsedCardsRaw = await fs.promises.readFile(cardsPath, 'utf8');
-  const parsedCards = JSON.parse(parsedCardsRaw) as { uuid: string }[];
-  const targetUuids = new Set(parsedCards.map((c) => c.uuid)); // used to skip irrelevant UUIDs
+  // ✅ STREAM parsedCards.json to build a set of relevant UUIDs (low memory)
+  const targetUuids = new Set<string>();
+  await new Promise<void>((resolve, reject) => {
+    const uuidStream = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
+
+    uuidStream.on('data', ({ value }) => targetUuids.add(value.uuid));
+    uuidStream.on('end', resolve);
+    uuidStream.on('error', (err) => {
+      logError(`UUID stream failed: ${err}`);
+      reject(err);
+    });
+  });
 
   const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
   writeStream.write('[\n');
