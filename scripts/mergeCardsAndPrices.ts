@@ -75,29 +75,29 @@ function hasValidPrices(prices: PriceBlob['prices']): boolean {
 
 async function mergeCardsAndPrices(): Promise<void> {
   try {
-    log('Starting mergeCardsAndPrices (streamed)...');
+    log('Starting mergeCardsAndPrices (streaming prices only)...');
 
-    // Load prices (smaller) into memory
-    const pricesRaw = await fs.promises.readFile(pricesPath, 'utf-8');
-    const prices: PriceBlob[] = JSON.parse(pricesRaw);
-    const priceMap = new Map(prices.map((p) => [p.uuid, p]));
+    // Step 1: Load all parsed cards into memory
+    const cardsRaw = await fs.promises.readFile(cardsPath, 'utf-8');
+    const cards: Card[] = JSON.parse(cardsRaw);
+    const cardMap = new Map(cards.map((card) => [card.uuid, card]));
 
+    // Step 2: Stream prices, match against cardMap
     const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
     writeStream.write('[\n');
 
     let first = true;
     let matched = 0;
 
-    // Stream parsedCards.json
-    const pipeline = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
+    const pipeline = chain([fs.createReadStream(pricesPath), parser(), streamArray()]);
 
-    pipeline.on('data', ({ value }: { value: Card }) => {
-      const priceEntry = priceMap.get(value.uuid);
-      if (!priceEntry || !hasValidPrices(priceEntry.prices)) return;
+    pipeline.on('data', ({ value }: { value: PriceBlob }) => {
+      const card = cardMap.get(value.uuid);
+      if (!card || !hasValidPrices(value.prices)) return;
 
       const merged = {
-        ...value,
-        prices: priceEntry.prices,
+        ...card,
+        prices: value.prices,
       };
 
       const line = JSON.stringify(merged);

@@ -18,20 +18,29 @@
  * - Automatically detects today’s date to extract just the latest price points
  */
 
+/**
+ * Stream-safe Price Parser
+ *
+ * Same logic as before, but fully streaming – even the UUID lookup.
+ * Will only retain matched prices from known UUIDs.
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
+import { streamArray } from 'stream-json/streamers/StreamArray';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
 const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
 const outputPath = path.join(__dirname, '../temp/parsedPrices.json');
-//uncomment this when checking for the right date, i commented out after midnight testing
-// const today = new Date().toISOString().split('T')[0];
+
+// Set the date to filter on – use dynamic or fixed for testing
 const today = '2025-06-07';
+//const today = new Date().toISOString().split('T')[0];
 
 type PricePoints = {
   etched?: Record<string, number>;
@@ -50,13 +59,26 @@ type ParsedCardPrice = {
   prices: Partial<Record<'tcgplayer' | 'cardkingdom' | 'cardmarket', PriceList>>;
 };
 
-async function parsePrices(): Promise<void> {
+export async function parsePrices(): Promise<void> {
   log('Starting parsePrices...');
 
-  const parsedCardsRaw = await fs.promises.readFile(cardsPath, 'utf8');
-  const parsedCards = JSON.parse(parsedCardsRaw) as { uuid: string }[];
-  const targetUuids = new Set(parsedCards.map((c) => c.uuid));
+  // Step 1: Stream card UUIDs into a Set
+  const knownUUIDs = new Set<string>();
+  await new Promise<void>((resolve, reject) => {
+    const cardStream = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
 
+    cardStream.on('data', ({ value }) => {
+      knownUUIDs.add(value.uuid);
+    });
+
+    cardStream.on('end', () => resolve());
+    cardStream.on('error', (err) => {
+      logError(`Failed to stream card UUIDs: ${err}`);
+      reject(err);
+    });
+  });
+
+  // Step 2: Stream the price data and filter as we go
   const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
   writeStream.write('[\n');
 
@@ -75,7 +97,7 @@ async function parsePrices(): Promise<void> {
     pipeline.on('data', ({ key, value }) => {
       processed++;
       const uuid = key;
-      if (!targetUuids.has(uuid)) return;
+      if (!knownUUIDs.has(uuid)) return;
 
       const paper = value?.paper;
       if (!paper) return;
