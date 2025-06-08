@@ -34,7 +34,7 @@ const steps = [
   'parsePrices',
   'mergeCardsAndPrices',
   'uploadToMongo',
-  'cleanup',
+  'cleanUp',
 ];
 
 /**
