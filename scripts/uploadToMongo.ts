@@ -30,19 +30,14 @@ dotenv.config();
 
 const MONGO_URI = process.env.MONGO_URI!;
 const inputPath = path.join(__dirname, '../temp/mergedCards.json');
-const BATCH_SIZE = 1000;
 
 if (!MONGO_URI) throw new Error('Missing MONGO_URI');
 
-/**
- * Converts nested price structure into flat dot-notated MongoDB update paths
- */
 function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   const updates: Record<string, number | string> = {};
 
   for (const vendor of Object.keys(paperPrices)) {
     const priceList = paperPrices[vendor];
-
     if (priceList.currency) {
       updates[`prices.paper.${vendor}.currency`] = priceList.currency;
     }
@@ -66,29 +61,25 @@ function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   return updates;
 }
 
-/**
- * Streams mergedCards.json and performs batched upserts into MongoDB
- */
 async function uploadToMongo() {
   try {
     log('Connecting to MongoDB...');
     await mongoose.connect(MONGO_URI);
 
     log('Streaming mergedCards.json...');
-    let buffer: any[] = [];
     let uploaded = 0;
 
-    // Writes the current buffer of cards to Mongo in a bulk upsert operation
-    const flushBuffer = async () => {
-      if (buffer.length === 0) return;
+    await new Promise<void>((resolve, reject) => {
+      const pipeline = chain([fs.createReadStream(inputPath), parser(), streamArray()]);
 
-      const operations = buffer.map((card) => {
+      pipeline.on('data', async ({ value }) => {
+        const card = value;
         const priceUpdates = flattenPaperPrices(card.prices);
 
-        return {
-          updateOne: {
-            filter: { uuid: card.uuid },
-            update: {
+        try {
+          await Card.updateOne(
+            { uuid: card.uuid },
+            {
               $setOnInsert: {
                 uuid: card.uuid,
                 name: card.name,
@@ -99,30 +90,15 @@ async function uploadToMongo() {
               },
               $set: priceUpdates,
             },
-            upsert: true,
-          },
-        };
-      });
-
-      await Card.bulkWrite(operations);
-      uploaded += buffer.length;
-      buffer = [];
-    };
-
-    await new Promise<void>((resolve, reject) => {
-      const pipeline = chain([fs.createReadStream(inputPath), parser(), streamArray()]);
-
-      pipeline.on('data', async ({ value }) => {
-        buffer.push(value);
-        if (buffer.length >= BATCH_SIZE) {
-          pipeline.pause();
-          await flushBuffer();
-          pipeline.resume();
+            { upsert: true }
+          );
+          uploaded++;
+        } catch (err) {
+          logError(`Failed to upsert card ${card.uuid}: ${err}`);
         }
       });
 
-      pipeline.on('end', async () => {
-        await flushBuffer();
+      pipeline.on('end', () => {
         log(`Upload complete. Total cards uploaded: ${uploaded}`);
         resolve();
       });
