@@ -11,39 +11,42 @@
  * The download uses automatic retries to handle network flakiness.
  */
 
-import { DownloaderHelper } from 'node-downloader-helper';
+import https from 'https';
+import fs from 'fs';
 import path from 'path';
 import { log, logError } from '../src/utils/jsonHelpers';
 
 const destinationDir = path.join(__dirname, '../temp');
 
-/**
- * Helper function to download a file and retry on failure
- */
 function downloadFile(url: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const dl = new DownloaderHelper(url, destinationDir, {
-      fileName: filename,
-      retry: { maxRetries: 3, delay: 2000 }, // Retry if the download fails
-    });
+    const filePath = path.join(destinationDir, filename);
+    const file = fs.createWriteStream(filePath);
 
-    dl.on('end', () => {
-      log(`Downloaded ${filename}`);
-      resolve();
-    });
+    https
+      .get(url, (response) => {
+        if (response.statusCode !== 200) {
+          reject(new Error(`Failed to get '${url}' (${response.statusCode})`));
+          return;
+        }
 
-    dl.on('error', (err) => {
-      logError(`Failed to download ${filename}: ${err}`);
-      reject(err);
-    });
+        response.pipe(file);
 
-    dl.start();
+        file.on('finish', () => {
+          file.close(() => {
+            log(`Downloaded ${filename}`);
+            resolve();
+          });
+        });
+      })
+      .on('error', (err) => {
+        fs.unlink(filePath, () => {}); // clean up incomplete file
+        logError(`Failed to download ${filename}: ${err.message}`);
+        reject(err);
+      });
   });
 }
 
-/**
- * Main download routine – fetch both MTGJSON files sequentially
- */
 (async () => {
   try {
     log(`Starting daily download...`);
