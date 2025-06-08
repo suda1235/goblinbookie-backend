@@ -24,15 +24,14 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { streamArray } from 'stream-json/streamers/StreamArray';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
 const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
 const outputPath = path.join(__dirname, '../temp/parsedPrices.json');
-
-// Current date string used to extract today's price (e.g., "2025-06-08")
-const today = new Date().toISOString().split('T')[0];
+//uncomment this when checking for the right date, i commented out after midnight testing
+// const today = new Date().toISOString().split('T')[0];
+const today = '2025-06-07';
 
 type PricePoints = {
   etched?: Record<string, number>;
@@ -54,18 +53,9 @@ type ParsedCardPrice = {
 async function parsePrices(): Promise<void> {
   log('Starting parsePrices...');
 
-  // ✅ STREAM parsedCards.json to build a set of relevant UUIDs (low memory)
-  const targetUuids = new Set<string>();
-  await new Promise<void>((resolve, reject) => {
-    const uuidStream = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
-
-    uuidStream.on('data', ({ value }) => targetUuids.add(value.uuid));
-    uuidStream.on('end', resolve);
-    uuidStream.on('error', (err) => {
-      logError(`UUID stream failed: ${err}`);
-      reject(err);
-    });
-  });
+  const parsedCardsRaw = await fs.promises.readFile(cardsPath, 'utf8');
+  const parsedCards = JSON.parse(parsedCardsRaw) as { uuid: string }[];
+  const targetUuids = new Set(parsedCards.map((c) => c.uuid));
 
   const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
   writeStream.write('[\n');
@@ -79,7 +69,7 @@ async function parsePrices(): Promise<void> {
       fs.createReadStream(pricesPath),
       parser(),
       pick({ filter: 'data' }),
-      streamObject(), // each key is a UUID
+      streamObject(),
     ]);
 
     pipeline.on('data', ({ key, value }) => {
@@ -106,12 +96,12 @@ async function parsePrices(): Promise<void> {
 
           for (const finish of ['normal', 'foil', 'etched'] as const) {
             const finishData = typeData[finish];
-            if (!finishData || !finishData[today]) continue;
+            if (!finishData || typeof finishData !== 'object') continue;
 
-            // Preserve MTGJSON date structure
-            points[finish] = {
-              [today]: finishData[today],
-            };
+            const priceToday = finishData[today];
+            if (priceToday !== undefined) {
+              points[finish] = { [today]: priceToday };
+            }
           }
 
           if (Object.keys(points).length > 0) {

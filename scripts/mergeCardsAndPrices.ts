@@ -25,7 +25,6 @@ const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
 const pricesPath = path.join(__dirname, '../temp/parsedPrices.json');
 const outputPath = path.join(__dirname, '../temp/mergedCards.json');
 
-// Type declarations to enforce structure of both input and merged files
 type Card = {
   uuid: string;
   name: string;
@@ -52,7 +51,6 @@ type PriceBlob = {
   prices: Partial<Record<'tcgplayer' | 'cardkingdom' | 'cardmarket', PriceList>> | undefined;
 };
 
-// Skip cards with completely empty or malformed price data
 function hasValidPrices(prices: PriceBlob['prices']): boolean {
   if (!prices || typeof prices !== 'object') return false;
 
@@ -75,18 +73,14 @@ function hasValidPrices(prices: PriceBlob['prices']): boolean {
   return false;
 }
 
-/**
- * Streams parsedPrices.json and joins entries to parsedCards by UUID,
- * outputting mergedCards.json for DB ingestion.
- */
 async function mergeCardsAndPrices(): Promise<void> {
   try {
     log('Starting mergeCardsAndPrices (streamed)...');
 
-    // Load parsed card metadata into memory (small enough to fit)
-    const cardsRaw = await fs.promises.readFile(cardsPath, 'utf-8');
-    const cards: Card[] = JSON.parse(cardsRaw);
-    const cardMap = new Map(cards.map((card) => [card.uuid, card]));
+    // Load prices (smaller) into memory
+    const pricesRaw = await fs.promises.readFile(pricesPath, 'utf-8');
+    const prices: PriceBlob[] = JSON.parse(pricesRaw);
+    const priceMap = new Map(prices.map((p) => [p.uuid, p]));
 
     const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
     writeStream.write('[\n');
@@ -94,16 +88,16 @@ async function mergeCardsAndPrices(): Promise<void> {
     let first = true;
     let matched = 0;
 
-    // Stream price data from file (to avoid memory crash)
-    const pipeline = chain([fs.createReadStream(pricesPath), parser(), streamArray()]);
+    // Stream parsedCards.json
+    const pipeline = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
 
-    pipeline.on('data', ({ value }: { value: PriceBlob }) => {
-      const card = cardMap.get(value.uuid);
-      if (!card || !hasValidPrices(value.prices)) return;
+    pipeline.on('data', ({ value }: { value: Card }) => {
+      const priceEntry = priceMap.get(value.uuid);
+      if (!priceEntry || !hasValidPrices(priceEntry.prices)) return;
 
       const merged = {
-        ...card,
-        prices: value.prices,
+        ...value,
+        prices: priceEntry.prices,
       };
 
       const line = JSON.stringify(merged);
