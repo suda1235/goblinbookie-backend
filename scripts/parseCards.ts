@@ -26,12 +26,11 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { writeJsonFile, log, logError } from '../src/utils/jsonHelpers';
+import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const inputPath = path.join(__dirname, '../temp/AllIdentifiers.json');
 const outputPath = path.join(__dirname, '../temp/parsedCards.json');
 
-// Interface describing the fields we want to keep for each card
 interface ParsedCard {
   uuid: string;
   name: string;
@@ -41,29 +40,26 @@ interface ParsedCard {
   purchaseUrls?: Record<string, string>;
 }
 
-/**
- * Parses AllIdentifiers.json from MTGJSON and extracts only the English-language cards.
- * Saves a simplified list of card metadata to parsedCards.json.
- */
-async function parseCards(): Promise<ParsedCard[]> {
+async function parseCards(): Promise<void> {
+  log('Starting parseCards...');
+
+  const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
+  writeStream.write('[\n');
+
+  let processed = 0;
+  let kept = 0;
+  let first = true;
+
   return new Promise((resolve, reject) => {
-    log('Starting parseCards...');
-
-    const parsedCards: ParsedCard[] = [];
-    let processed = 0;
-    let kept = 0;
-
     const pipeline = chain([
       fs.createReadStream(inputPath),
       parser(),
       pick({ filter: 'data' }),
-      streamObject(), // stream key-value pairs inside "data" object
+      streamObject(),
     ]);
 
     pipeline.on('data', ({ value }) => {
       processed++;
-
-      // Skip non-English printings to reduce unnecessary DB bloat
       if (value.language !== 'English') return;
 
       const card: ParsedCard = {
@@ -75,15 +71,20 @@ async function parseCards(): Promise<ParsedCard[]> {
         purchaseUrls: value.purchaseUrls,
       };
 
-      parsedCards.push(card);
+      const json = JSON.stringify(card);
+      if (!first) writeStream.write(',\n');
+      writeStream.write(json);
+      first = false;
       kept++;
     });
 
     pipeline.on('end', async () => {
       try {
+        writeStream.write('\n]\n');
+        writeStream.end();
+        await waitForStreamFinish(writeStream);
         log(`Finished. Processed ${processed}, kept ${kept}`);
-        await writeJsonFile(outputPath, parsedCards, true);
-        resolve(parsedCards);
+        resolve();
       } catch (err) {
         reject(err);
       }
