@@ -33,9 +33,6 @@ const inputPath = path.join(__dirname, '../temp/mergedCards.json');
 
 if (!MONGO_URI) throw new Error('Missing MONGO_URI');
 
-/**
- * Flattens nested price structure into MongoDB dot-notation update paths
- */
 function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   const updates: Record<string, number | string> = {};
 
@@ -62,13 +59,13 @@ function flattenPaperPrices(paperPrices: any): Record<string, number | string> {
   return updates;
 }
 
-/**
- * Streams mergedCards.json and performs individual upserts into MongoDB
- */
 async function uploadToMongo() {
   try {
     log('Connecting to MongoDB...');
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(MONGO_URI, {
+      bufferCommands: false, // reduces memory if mongoose isn't ready
+      autoIndex: false, // avoids building indexes during write
+    });
 
     log('Streaming mergedCards.json...');
     let uploaded = 0;
@@ -77,6 +74,8 @@ async function uploadToMongo() {
       const pipeline = chain([fs.createReadStream(inputPath), parser(), streamArray()]);
 
       pipeline.on('data', async ({ value }) => {
+        pipeline.pause(); // 🔒 Pause while we await the DB write
+
         const card = value;
         const priceUpdates = flattenPaperPrices(card.prices);
 
@@ -100,6 +99,8 @@ async function uploadToMongo() {
         } catch (err) {
           logError(`Failed to upsert card ${card.uuid}: ${err}`);
         }
+
+        pipeline.resume(); // 🔓 Resume after the write finishes
       });
 
       pipeline.on('end', () => {
