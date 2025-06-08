@@ -1,19 +1,35 @@
+/**
+ * JSON Helper Utilities
+ *
+ * Provides utility functions for consistent logging, JSON streaming,
+ * file writing, cleanup, and file checks throughout the Goblin Bookie sync pipeline.
+ *
+ * Responsibilities:
+ * - Unified logging (info and error) via Winston-based `logger.ts`
+ * - Stream large JSON files from disk in a memory-efficient way
+ * - Write JSON files (pretty or compact)
+ * - Track performance with timers
+ * - Clean up temp files and check for file presence
+ *
+ * These functions are used across the entire sync pipeline to ensure robust
+ * error handling, transparency, and testability.
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
+import { logger } from './logger';
 
 // logs with consistent format
 export function log(message: string) {
-  const timestamp = new Date().toISOString();
-  console.log(`[LOG] ${timestamp}: ${message}`);
+  logger.info(message);
 }
 // error logs with consistent format
 export function logError(message: string) {
-  const timestamp = new Date().toISOString();
-  console.error(`[ERROR] ${timestamp}: ${message}`);
+  logger.error(message);
 }
 
 // writing to JSON
