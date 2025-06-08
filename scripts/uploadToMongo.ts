@@ -63,8 +63,8 @@ async function uploadToMongo() {
   try {
     log('Connecting to MongoDB...');
     await mongoose.connect(MONGO_URI, {
-      bufferCommands: false, // reduces memory if mongoose isn't ready
-      autoIndex: false, // avoids building indexes during write
+      bufferCommands: false, // don't queue commands before connected
+      autoIndex: false, // skip index creation during runtime
     });
 
     log('Streaming mergedCards.json...');
@@ -74,7 +74,7 @@ async function uploadToMongo() {
       const pipeline = chain([fs.createReadStream(inputPath), parser(), streamArray()]);
 
       pipeline.on('data', async ({ value }) => {
-        pipeline.pause(); // 🔒 Pause while we await the DB write
+        pipeline.pause(); // pause the stream until DB write completes
 
         const card = value;
         const priceUpdates = flattenPaperPrices(card.prices);
@@ -100,7 +100,7 @@ async function uploadToMongo() {
           logError(`Failed to upsert card ${card.uuid}: ${err}`);
         }
 
-        pipeline.resume(); // 🔓 Resume after the write finishes
+        pipeline.resume(); // resume the stream
       });
 
       pipeline.on('end', () => {
