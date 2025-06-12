@@ -1,3 +1,21 @@
+/**
+ * Parse Price Data (AllPrices.json)
+ *
+ * This script loads the full MTGJSON AllPrices.json file and extracts the most
+ * recent available price per card UUID for each vendor, type, and finish.
+ *
+ * Why we do this:
+ * - We only want price data for cards we’ve already filtered and kept (via `parseCards`)
+ * - AllPrices.json includes historical data going back 90+ days — we only need the most recent
+ * - This keeps Mongo upload size minimal while preserving essential pricing info
+ *
+ * Implementation Notes:
+ * - We load UUIDs from `parsedCards.ndjson` into a Set to restrict which prices to include
+ * - We stream AllPrices.json using `stream-json` to avoid memory overload
+ * - We extract only the most recent date entry for each finish/type/vendor
+ * - Results are saved to `parsedPrices.ndjson` in NDJSON format
+ */
+
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
@@ -9,6 +27,10 @@ import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const knownUUIDs = new Set<string>();
 
+/**
+ * Load UUIDs from parsedCards.ndjson into memory.
+ * This restricts which prices we extract to just the cards we kept.
+ */
 async function loadUUIDs(cardsPath: string) {
   log('Loading UUIDs from parsedCards.ndjson...');
   let count = 0;
@@ -33,6 +55,9 @@ async function loadUUIDs(cardsPath: string) {
   log(`Loaded ${count} card UUIDs`);
 }
 
+/**
+ * Helper to find the most recent date in a price object (e.g., {"2024-06-01": 2.50, ...})
+ */
 function getMostRecentDate(obj: Record<string, number>): string | null {
   const dates = Object.keys(obj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
   return dates.sort().reverse()[0] ?? null;
@@ -43,6 +68,9 @@ type FinishPrices = { [finish: string]: PriceDateEntry };
 type PriceType = { [type: string]: FinishPrices };
 type VendorPrices = { [vendor: string]: PriceType };
 
+/**
+ * Main parsing logic – streams AllPrices.json and extracts prices for known UUIDs only.
+ */
 async function parsePricesNDJSON() {
   const cardsPath = path.join(__dirname, '../temp/parsedCards.ndjson');
   const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
@@ -110,6 +138,7 @@ async function parsePricesNDJSON() {
   pipeline.on('error', (err) => logError(`parsePrices stream failed: ${err}`));
 }
 
+// Start the parsing process
 parsePricesNDJSON().catch((err) => {
   logError(`parsePrices failed: ${err}`);
 });
