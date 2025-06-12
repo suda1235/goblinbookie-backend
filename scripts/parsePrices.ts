@@ -1,84 +1,115 @@
-/**
- * Card Metadata Parser
- *
- * What this does:
- * Streams through `AllIdentifiers.json` (the giant list of all card printings),
- * picks out only English-language cards, strips down each object to just what
- * we actually care about, and writes them to `parsedCards.ndjson` (1 per line).
- *
- * Why this matters:
- * - `AllIdentifiers.json` is huge and full of stuff we don’t need (tokens, foreign printings, etc).
- * - We want only English cards for now, with a few key fields to power our app.
- * - We output as NDJSON to keep memory usage low and enable efficient downstream processing.
- *
- * Output format (1 JSON object per line):
- * {
- *   uuid,         // unique ID for this specific card printing
- *   name,         // card name
- *   setCode,      // what set it's from (e.g., “DOM” for Dominaria)
- *   language,     // always “English” here
- *   scryfallId?,  // optional – helps with images or Scryfall links
- *   purchaseUrls? // optional – links to buy this printing
- * }
- */
-
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
-const inputPath = path.join(__dirname, '../temp/AllIdentifiers.json');
-const outputPath = path.join(__dirname, '../temp/parsedCards.ndjson');
+const knownUUIDs = new Set<string>();
 
-async function parseCardsNDJSON() {
-  log('Starting parseCards from AllIdentifiers.json');
+async function loadUUIDs(cardsPath: string) {
+  log('Loading UUIDs from parsedCards.ndjson...');
+  let count = 0;
 
-  let total = 0;
-  let kept = 0;
+  const rl = readline.createInterface({
+    input: fs.createReadStream(cardsPath),
+    crlfDelay: Infinity,
+  });
 
-  // Stream + filter only the "data" key, which contains the real card entries
+  for await (const line of rl) {
+    try {
+      const card = JSON.parse(line);
+      if (card.uuid) {
+        knownUUIDs.add(card.uuid);
+        count++;
+      }
+    } catch (err) {
+      logError(`Failed to parse line in parsedCards.ndjson: ${err}`);
+    }
+  }
+
+  log(`Loaded ${count} card UUIDs`);
+}
+
+function getMostRecentDate(obj: Record<string, number>): string | null {
+  const dates = Object.keys(obj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return dates.sort().reverse()[0] ?? null;
+}
+
+type PriceDateEntry = { [date: string]: number };
+type FinishPrices = { [finish: string]: PriceDateEntry };
+type PriceType = { [type: string]: FinishPrices };
+type VendorPrices = { [vendor: string]: PriceType };
+
+async function parsePricesNDJSON() {
+  const cardsPath = path.join(__dirname, '../temp/parsedCards.ndjson');
+  const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
+  const outputPath = path.join(__dirname, '../temp/parsedPrices.ndjson');
+
+  await loadUUIDs(cardsPath);
+
+  const writer = fs.createWriteStream(outputPath, 'utf-8');
   const pipeline = chain([
-    fs.createReadStream(inputPath),
+    fs.createReadStream(pricesPath),
     parser(),
     pick({ filter: 'data' }),
     streamObject(),
   ]);
 
-  // Write the result as newline-delimited JSON
-  const writer = fs.createWriteStream(outputPath, 'utf-8');
+  let processed = 0;
+  let kept = 0;
 
-  pipeline.on('data', ({ value }) => {
-    total++;
+  pipeline.on('data', ({ key, value }) => {
+    processed++;
 
-    // Skip anything that’s not English
-    if (value.language !== 'English') return;
+    if (!knownUUIDs.has(key)) return;
 
-    // Skip if we're missing critical fields
-    if (!value.uuid || !value.name || !value.setCode) return;
+    const pricesToday: VendorPrices = {};
 
-    const card = {
-      uuid: value.uuid,
-      name: value.name,
-      setCode: value.setCode,
-      language: value.language,
-      scryfallId: value.scryfallId, // optional, but useful
-      purchaseUrls: value.purchaseUrls, // optional, for linking to vendors
-    };
+    for (const vendor of ['tcgplayer', 'cardkingdom', 'cardmarket']) {
+      const vendorData = value.paper?.[vendor];
+      if (!vendorData) continue;
 
-    writer.write(JSON.stringify(card) + '\n');
-    kept++;
+      for (const type of ['retail', 'buylist']) {
+        const typeData = vendorData[type];
+        if (!typeData) continue;
+
+        for (const finish of ['normal', 'foil', 'etched']) {
+          const finishData = typeData[finish];
+          if (!finishData || typeof finishData !== 'object') continue;
+
+          const mostRecentDate = getMostRecentDate(finishData);
+          if (!mostRecentDate) continue;
+
+          const price = finishData[mostRecentDate];
+          if (price !== undefined) {
+            if (!pricesToday[vendor]) pricesToday[vendor] = {};
+            if (!pricesToday[vendor][type]) pricesToday[vendor][type] = {};
+            if (!pricesToday[vendor][type][finish]) pricesToday[vendor][type][finish] = {};
+
+            pricesToday[vendor][type][finish][mostRecentDate] = price;
+          }
+        }
+      }
+    }
+
+    if (Object.keys(pricesToday).length > 0) {
+      writer.write(JSON.stringify({ uuid: key, prices: pricesToday }) + '\n');
+      kept++;
+    }
   });
 
   pipeline.on('end', async () => {
     writer.end();
     await waitForStreamFinish(writer);
-    log(`parseCards complete: ${total} total entries, ${kept} cards written`);
+    log(`parsePrices complete: ${processed} total prices checked, ${kept} matched and written`);
   });
 
-  pipeline.on('error', (err) => logError(`parseCards stream failed: ${err}`));
+  pipeline.on('error', (err) => logError(`parsePrices stream failed: ${err}`));
 }
 
-parseCardsNDJSON();
+parsePricesNDJSON().catch((err) => {
+  logError(`parsePrices failed: ${err}`);
+});
