@@ -1,170 +1,115 @@
-/**
- *  Card Price Parser
- *
- * This script extracts only today's paper price data from the large `AllPrices.json` MTGJSON file.
- * It matches against known card UUIDs from `parsedCards.json` and outputs cleaned pricing data
- * in `parsedPrices.json`, preserving the nested structure by:
- *
- * - Keeping prices organized by vendor (TCGplayer, Card Kingdom, Cardmarket)
- * - Preserving MTGJSON's structure of date-keyed values inside `normal`, `foil`, `etched` subfields
- *
- * Why this matters:
- * - Keeps historical formatting intact for later upload to MongoDB
- * - Filters out all non-paper data and unused vendors
- * - Ensures that we only keep price info for cards we care about
- *
- * Implementation notes:
- * - Uses `stream-json` to keep memory usage low while handling 100k+ entries
- * - Automatically detects today’s date to extract just the latest price points
- */
-
-/**
- * Stream-safe Price Parser
- *
- * Same logic as before, but fully streaming – even the UUID lookup.
- * Will only retain matched prices from known UUIDs.
- */
-
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { streamArray } from 'stream-json/streamers/StreamArray';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
-const cardsPath = path.join(__dirname, '../temp/parsedCards.json');
-const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
-const outputPath = path.join(__dirname, '../temp/parsedPrices.json');
+const knownUUIDs = new Set<string>();
 
-// Set the date to filter on – use dynamic or fixed for testing
-const today = '2025-06-07';
-//const today = new Date().toISOString().split('T')[0];
+async function loadUUIDs(cardsPath: string) {
+  log('Loading UUIDs from parsedCards.ndjson...');
+  let count = 0;
 
-type PricePoints = {
-  etched?: Record<string, number>;
-  foil?: Record<string, number>;
-  normal?: Record<string, number>;
-};
-
-type PriceList = {
-  buylist?: PricePoints;
-  currency?: string;
-  retail?: PricePoints;
-};
-
-type ParsedCardPrice = {
-  uuid: string;
-  prices: Partial<Record<'tcgplayer' | 'cardkingdom' | 'cardmarket', PriceList>>;
-};
-
-export async function parsePrices(): Promise<void> {
-  log('Starting parsePrices...');
-
-  // Step 1: Stream card UUIDs into a Set
-  const knownUUIDs = new Set<string>();
-  await new Promise<void>((resolve, reject) => {
-    const cardStream = chain([fs.createReadStream(cardsPath), parser(), streamArray()]);
-
-    cardStream.on('data', ({ value }) => {
-      knownUUIDs.add(value.uuid);
-    });
-
-    cardStream.on('end', () => resolve());
-    cardStream.on('error', (err) => {
-      logError(`Failed to stream card UUIDs: ${err}`);
-      reject(err);
-    });
+  const rl = readline.createInterface({
+    input: fs.createReadStream(cardsPath),
+    crlfDelay: Infinity,
   });
 
-  // Step 2: Stream the price data and filter as we go
-  const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
-  writeStream.write('[\n');
-
-  return new Promise((resolve, reject) => {
-    let processed = 0;
-    let kept = 0;
-    let first = true;
-
-    const pipeline = chain([
-      fs.createReadStream(pricesPath),
-      parser(),
-      pick({ filter: 'data' }),
-      streamObject(),
-    ]);
-
-    pipeline.on('data', ({ key, value }) => {
-      processed++;
-      const uuid = key;
-      if (!knownUUIDs.has(uuid)) return;
-
-      const paper = value?.paper;
-      if (!paper) return;
-
-      const prices: ParsedCardPrice['prices'] = {};
-
-      for (const vendor of ['tcgplayer', 'cardkingdom', 'cardmarket']) {
-        const vendorData = paper[vendor];
-        if (!vendorData) continue;
-
-        const priceList: PriceList = {};
-
-        for (const type of ['retail', 'buylist'] as const) {
-          const typeData = vendorData[type];
-          if (!typeData) continue;
-
-          const points: PricePoints = {};
-
-          for (const finish of ['normal', 'foil', 'etched'] as const) {
-            const finishData = typeData[finish];
-            if (!finishData || typeof finishData !== 'object') continue;
-
-            const priceToday = finishData[today];
-            if (priceToday !== undefined) {
-              points[finish] = { [today]: priceToday };
-            }
-          }
-
-          if (Object.keys(points).length > 0) {
-            priceList[type] = points;
-          }
-        }
-
-        if (Object.keys(priceList).length > 0) {
-          prices[vendor as keyof ParsedCardPrice['prices']] = priceList;
-        }
+  for await (const line of rl) {
+    try {
+      const card = JSON.parse(line);
+      if (card.uuid) {
+        knownUUIDs.add(card.uuid);
+        count++;
       }
+    } catch (err) {
+      logError(`Failed to parse line in parsedCards.ndjson: ${err}`);
+    }
+  }
 
-      if (Object.keys(prices).length === 0) return;
-
-      const entry: ParsedCardPrice = { uuid, prices };
-      const json = JSON.stringify(entry);
-      if (!first) writeStream.write(',\n');
-      writeStream.write(json);
-      first = false;
-      kept++;
-    });
-
-    pipeline.on('end', async () => {
-      try {
-        writeStream.write('\n]\n');
-        writeStream.end();
-        await waitForStreamFinish(writeStream);
-        log(`Finished. Processed ${processed}, kept ${kept}`);
-        resolve();
-      } catch (err) {
-        reject(err);
-      }
-    });
-
-    pipeline.on('error', (err) => {
-      logError(`parsePrices stream failed: ${err}`);
-      reject(err);
-    });
-  });
+  log(`Loaded ${count} card UUIDs`);
 }
 
-parsePrices().catch((err) => {
+function getMostRecentDate(obj: Record<string, number>): string | null {
+  const dates = Object.keys(obj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return dates.sort().reverse()[0] ?? null;
+}
+
+type PriceDateEntry = { [date: string]: number };
+type FinishPrices = { [finish: string]: PriceDateEntry };
+type PriceType = { [type: string]: FinishPrices };
+type VendorPrices = { [vendor: string]: PriceType };
+
+async function parsePricesNDJSON() {
+  const cardsPath = path.join(__dirname, '../temp/parsedCards.ndjson');
+  const pricesPath = path.join(__dirname, '../temp/AllPrices.json');
+  const outputPath = path.join(__dirname, '../temp/parsedPrices.ndjson');
+
+  await loadUUIDs(cardsPath);
+
+  const writer = fs.createWriteStream(outputPath, 'utf-8');
+  const pipeline = chain([
+    fs.createReadStream(pricesPath),
+    parser(),
+    pick({ filter: 'data' }),
+    streamObject(),
+  ]);
+
+  let processed = 0;
+  let kept = 0;
+
+  pipeline.on('data', ({ key, value }) => {
+    processed++;
+
+    if (!knownUUIDs.has(key)) return;
+
+    const pricesToday: VendorPrices = {};
+
+    for (const vendor of ['tcgplayer', 'cardkingdom', 'cardmarket']) {
+      const vendorData = value.paper?.[vendor];
+      if (!vendorData) continue;
+
+      for (const type of ['retail', 'buylist']) {
+        const typeData = vendorData[type];
+        if (!typeData) continue;
+
+        for (const finish of ['normal', 'foil', 'etched']) {
+          const finishData = typeData[finish];
+          if (!finishData || typeof finishData !== 'object') continue;
+
+          const mostRecentDate = getMostRecentDate(finishData);
+          if (!mostRecentDate) continue;
+
+          const price = finishData[mostRecentDate];
+          if (price !== undefined) {
+            if (!pricesToday[vendor]) pricesToday[vendor] = {};
+            if (!pricesToday[vendor][type]) pricesToday[vendor][type] = {};
+            if (!pricesToday[vendor][type][finish]) pricesToday[vendor][type][finish] = {};
+
+            pricesToday[vendor][type][finish][mostRecentDate] = price;
+          }
+        }
+      }
+    }
+
+    if (Object.keys(pricesToday).length > 0) {
+      writer.write(JSON.stringify({ uuid: key, prices: pricesToday }) + '\n');
+      kept++;
+    }
+  });
+
+  pipeline.on('end', async () => {
+    writer.end();
+    await waitForStreamFinish(writer);
+    log(`parsePrices complete: ${processed} total prices checked, ${kept} matched and written`);
+  });
+
+  pipeline.on('error', (err) => logError(`parsePrices stream failed: ${err}`));
+}
+
+parsePricesNDJSON().catch((err) => {
   logError(`parsePrices failed: ${err}`);
 });

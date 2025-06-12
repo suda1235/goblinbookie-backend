@@ -1,30 +1,24 @@
-/**
- * Cleanup Script
- *
- * This script is run at the end of the daily sync process.
- * It deletes all temporary .json files from the /temp directory
- * to ensure that each run starts with a clean slate.
- *
- * Only .json files are affected, and logs are printed to confirm
- * successful cleanup or highlight any errors.
- */
-
+import fs from 'fs';
 import path from 'path';
-import { cleanDirectory, log, logError } from '../src/utils/jsonHelpers';
+import { log, logError } from '../src/utils/jsonHelpers';
 
-async function cleanup() {
+const tempDir = path.join(__dirname, '../temp');
+const keepFile = '.keep';
+
+async function cleanDirectoryExcept(fileToKeep: string) {
   try {
-    log('Starting cleanup...');
+    const files = await fs.promises.readdir(tempDir);
+    const deletions = files
+      .filter((file) => file !== fileToKeep)
+      .map((file) =>
+        fs.promises.unlink(path.join(tempDir, file)).then(() => log(`Deleted file: ${file}`))
+      );
 
-    const tempDir = path.join(__dirname, '../temp');
-
-    // Remove all JSON files in the temp directory
-    await cleanDirectory(tempDir, /\.json$/);
-
-    log('Cleanup complete.');
-  } catch (err) {
-    logError(`Cleanup failed: ${err}`);
+    await Promise.all(deletions);
+    log(`Cleaned directory: ${tempDir} (except ${fileToKeep})`);
+  } catch (err: any) {
+    logError(`Cleanup failed: ${err.message}`);
   }
 }
 
-cleanup();
+cleanDirectoryExcept(keepFile);
