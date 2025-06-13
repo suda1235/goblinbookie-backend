@@ -27,7 +27,7 @@ import readline from 'readline';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 async function sortNdjson(inputPath: string, outputPath: string): Promise<void> {
-  log(`📥 Starting sort for ${inputPath}`);
+  log(`Starting sort for ${inputPath}`);
 
   const lines: any[] = [];
   let total = 0;
