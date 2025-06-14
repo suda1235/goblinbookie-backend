@@ -1,8 +1,14 @@
 /**
  * Upload to MongoDB – with Historical Price Merge (Fixed Deep Merge)
  *
- * This version correctly merges incoming (today's) price data with any existing historical price data
- * for each card, ensuring that your price history accumulates day by day instead of being overwritten.
+ * This script uploads card price data to MongoDB and ensures that historical price data
+ * is preserved for each card. When new price data for a card arrives, it is merged with
+ * any existing historical data so that price history accumulates over time and is never lost.
+ *
+ * Key features:
+ * - Streams NDJSON input to handle large datasets efficiently.
+ * - Deeply merges today's prices into existing price history for each card.
+ * - Upserts cards in MongoDB, preserving all previous price dates.
  */
 
 import fs from 'fs';
@@ -14,15 +20,16 @@ import { log, logError } from '../src/utils/jsonHelpers';
 
 dotenv.config();
 
-// Connect to MongoDB
+// Establish a connection to MongoDB using the connection string in .env
 mongoose.connect(process.env.MONGO_URI!).then(() => log('MongoDB connected'));
 
 /**
- * Deep merge price objects: preserves all historical dates, adds/replaces today's prices.
- * Uses JSON deep clone to prevent reference bugs!
+ * Deeply merge price objects so all previous price dates are kept and only today's
+ * prices are added or updated. This avoids overwriting historical price data.
+ * A deep clone of the existing object is made to prevent accidental mutation.
  */
 function mergePriceObjects(existing: any = {}, incoming: any = {}): any {
-  // Deep clone existing so we don't mutate any referenced objects
+  // Make a deep copy of existing prices so we don't mutate the original
   const result = JSON.parse(JSON.stringify(existing || {}));
 
   for (const vendor in incoming) {
@@ -32,7 +39,7 @@ function mergePriceObjects(existing: any = {}, incoming: any = {}): any {
       for (const finish in incoming[vendor][type]) {
         if (!result[vendor][type][finish]) result[vendor][type][finish] = {};
         for (const date in incoming[vendor][type][finish]) {
-          // Overwrite/add just this date's price
+          // For each date, add or update the price in the result
           result[vendor][type][finish][date] = incoming[vendor][type][finish][date];
         }
       }
@@ -42,7 +49,12 @@ function mergePriceObjects(existing: any = {}, incoming: any = {}): any {
 }
 
 /**
- * Main upload function: streams the NDJSON, merges historical prices, and upserts in batches.
+ * Reads card price data from a NDJSON file, merges with any existing prices in MongoDB,
+ * and upserts the result back to the database in batches.
+ *
+ * - Streams input line-by-line to minimize memory usage.
+ * - Uses batch operations for efficient writes.
+ * - Prints progress logs for every 5000 cards processed.
  */
 async function uploadNDJSON(filePath: string) {
   const rl = readline.createInterface({ input: fs.createReadStream(filePath) });
@@ -54,25 +66,14 @@ async function uploadNDJSON(filePath: string) {
   for await (const line of rl) {
     const card = JSON.parse(line);
 
-    // --- KEY CHANGE: merge price history before upserting ---
-    // Fetch just the prices field for this card (returns null if not found)
+    // Look up any existing price history for this card in MongoDB (by uuid)
     const existing = await Card.findOne({ uuid: card.uuid }, { prices: 1 }).lean();
 
-    // DEBUG: Show before and after for the first few cards
-    if (total < 5) {
-      console.log('\n--- Card UUID:', card.uuid, '---');
-      console.log('Existing prices:', JSON.stringify(existing?.prices, null, 2));
-      console.log('Incoming prices:', JSON.stringify(card.prices, null, 2));
-    }
-
+    // Merge today's prices into the accumulated price history
     const mergedPrices = mergePriceObjects(existing?.prices, card.prices);
 
-    if (total < 5) {
-      console.log('Merged prices:', JSON.stringify(mergedPrices, null, 2));
-    }
-
+    // Build the new card object with full merged price history
     const updatedCard = { ...card, prices: mergedPrices };
-    // --------------------------------------------------------
 
     buffer.push({
       updateOne: {
@@ -82,7 +83,7 @@ async function uploadNDJSON(filePath: string) {
       },
     });
 
-    // Flush when buffer is full
+    // Write to MongoDB in batches for efficiency
     if (buffer.length >= batchSize) {
       await Card.bulkWrite(buffer);
       total += buffer.length;
@@ -92,7 +93,7 @@ async function uploadNDJSON(filePath: string) {
     }
   }
 
-  // Final flush (if any)
+  // Flush any remaining cards in the buffer
   if (buffer.length > 0) {
     await Card.bulkWrite(buffer);
     total += buffer.length;
@@ -102,5 +103,5 @@ async function uploadNDJSON(filePath: string) {
   mongoose.disconnect();
 }
 
-// Start upload from mergedCards.ndjson
+// Start the upload process from the mergedCards.ndjson file
 uploadNDJSON('temp/mergedCards.ndjson').catch((err) => logError(`Upload failed: ${err}`));

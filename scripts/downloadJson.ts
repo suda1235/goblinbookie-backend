@@ -1,21 +1,22 @@
 /**
  * Daily JSON Downloader
  *
- * This script downloads the two essential MTGJSON source files:
+ * Purpose:
+ * This script downloads the two critical MTGJSON data files used by Goblin Bookie:
  *
- * - AllIdentifiers.json → Contains full card metadata (uuid, name, set, etc.)
- * - AllPrices.json → Contains historical + current price data for each card
+ * - AllIdentifiers.json: Contains comprehensive card metadata (uuid, name, setCode, etc.)
+ * - AllPrices.json: Contains both historical and current price data for every card
  *
- * Why we need this:
- * - These files form the foundation of the Goblin Bookie price sync system.
- * - They are large (hundreds of MB to 1+ GB), so streaming and error handling are critical.
- * - The script saves them to `/temp` for later parsing by `parseCards.ts` and `parsePrices.ts`.
+ * Why this is needed:
+ * - These files are the starting point for the entire sync pipeline; all parsing and merging depend on them.
+ * - Both files are very large, so the download is streamed directly to disk to prevent memory overload.
+ * - Files are saved to the `/temp` directory for subsequent scripts to process.
  *
- * Implementation notes:
- * - Downloads via Node's `https` module (no external libs required)
- * - Streams data to disk to avoid memory spikes
- * - Handles errors cleanly (non-200 status, network failure, etc.)
- * - Automatically logs each file download and any failures
+ * Implementation details:
+ * - Uses Node's native `https` module for HTTP requests (no extra dependencies).
+ * - Streams each response to disk efficiently, line by line.
+ * - Cleans up incomplete files and handles network/HTTP errors gracefully.
+ * - Logs the status of each download for monitoring and debugging.
  */
 
 import https from 'https';
@@ -26,8 +27,8 @@ import { log, logError } from '../src/utils/jsonHelpers';
 const destinationDir = path.join(__dirname, '../temp');
 
 /**
- * Downloads a file from the given URL and writes it directly to disk.
- * Ensures that incomplete or failed downloads are cleaned up.
+ * Downloads a file from the specified URL and saves it directly to disk.
+ * Handles partial downloads and errors by cleaning up any incomplete files.
  */
 async function downloadFile(url: string, filename: string) {
   return new Promise<void>((resolve, reject) => {
@@ -37,14 +38,14 @@ async function downloadFile(url: string, filename: string) {
     https
       .get(url, (response) => {
         if (response.statusCode !== 200) {
-          // Fail early on bad HTTP status (e.g., 404 or 500)
+          // Abort on non-success HTTP status
           return reject(new Error(`Failed: ${response.statusCode}`));
         }
 
-        // Pipe the incoming response stream to the output file
+        // Stream the response directly into the file
         response.pipe(file);
 
-        // Log and resolve once the file is finished writing
+        // Resolve once writing is complete
         file.on('finish', () =>
           file.close(() => {
             log(`Downloaded ${filename}`);
@@ -53,7 +54,7 @@ async function downloadFile(url: string, filename: string) {
         );
       })
       .on('error', (err) => {
-        // Clean up partial file if the download fails
+        // Delete the partial file on any error
         fs.unlink(filePath, () => {});
         logError(`Failed downloading ${filename}: ${err.message}`);
         reject(err);
@@ -61,15 +62,15 @@ async function downloadFile(url: string, filename: string) {
   });
 }
 
-// Main routine to download both MTGJSON files
+// Main script: Download both MTGJSON files in sequence
 (async () => {
   try {
     log(`Starting daily download...`);
 
-    // AllIdentifiers.json contains core card metadata for parsing
+    // Download the card metadata file
     await downloadFile('https://mtgjson.com/api/v5/AllIdentifiers.json', 'AllIdentifiers.json');
 
-    // AllPrices.json contains full historical pricing by UUID
+    // Download the price history file
     await downloadFile('https://mtgjson.com/api/v5/AllPrices.json', 'AllPrices.json');
 
     log('Finished downloading daily MTGJSON files.');

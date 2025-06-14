@@ -1,25 +1,28 @@
 /**
- * Goblin Bookie Sync Pipeline – NDJSON Sorter
+ * NDJSON Sorter
  *
- * What this does:
- * Takes a newline-delimited JSON (NDJSON) file, loads each line into memory,
- * sorts them alphabetically by UUID, and writes them back out to a new file.
+ * Purpose:
+ * This script reads a newline-delimited JSON (NDJSON) file, parses each line as a JSON object,
+ * sorts all objects alphabetically by their `uuid` field, and writes the sorted objects back out
+ * to a new NDJSON file.
  *
- * Why we need this:
- * - The merge step later requires both `parsedCards.ndjson` and `parsedPrices.ndjson`
- *   to be sorted by UUID so we can do a linear merge (no lookups or index building).
- * - Sorting in memory is fast and easy since we’re working with pre-filtered datasets
- *   that are under ~1GB and line-by-line NDJSON format.
+ * Why sorting matters:
+ * - Both `parsedCards.ndjson` and `parsedPrices.ndjson` must be sorted by UUID before the merge step,
+ *   enabling an efficient linear (streamed) merge without building an index in memory.
+ * - Sorting in memory is suitable here because pre-filtered NDJSON files are typically well under 1GB,
+ *   allowing for fast and simple processing within a 2GB RAM limit (e.g., on Render).
  *
- * Streaming vs memory tradeoff:
- * - This script **does** load everything into memory (one line = one object).
- * - If this becomes a problem later (super rare), we could switch to an external sort.
- * - For now, it’s fast and stable enough to run inside Render’s 2GB RAM limit.
+ * Memory usage note:
+ * - This script loads all lines into memory before sorting. If files become too large in the future,
+ *   consider switching to an external sort (e.g., Unix `sort` or a streaming algorithm).
  *
  * Error handling:
- * - Any lines that fail to parse as JSON are logged and skipped.
- * - Logs total processed vs failed so we can catch corrupt input early.
+ * - Lines that cannot be parsed as valid JSON are logged and skipped.
+ * - At the end, the script logs how many lines were processed successfully and how many failed.
  *
+ * Usage:
+ *   ts-node sortNdjson.ts <inputPath> <outputPath>
+ *   Example: ts-node sortNdjson.ts data/parsedCards.ndjson data/parsedCards.sorted.ndjson
  */
 
 import fs from 'fs';
@@ -38,7 +41,7 @@ async function sortNdjson(inputPath: string, outputPath: string): Promise<void> 
     crlfDelay: Infinity,
   });
 
-  // Load and parse each line – invalid JSON gets logged and skipped
+  // Parse each NDJSON line and add to array. Log and skip invalid JSON lines.
   for await (const line of rl) {
     try {
       lines.push(JSON.parse(line));
@@ -49,10 +52,10 @@ async function sortNdjson(inputPath: string, outputPath: string): Promise<void> 
     }
   }
 
-  // Sort by UUID (used as join key later)
+  // Sort all objects by their `uuid` string (used as a join key in merge step)
   lines.sort((a, b) => a.uuid.localeCompare(b.uuid));
 
-  // Write sorted output line-by-line
+  // Write sorted objects to output NDJSON file, one JSON object per line
   const writer = fs.createWriteStream(outputPath, 'utf-8');
   for (const item of lines) writer.write(JSON.stringify(item) + '\n');
 
@@ -60,19 +63,4 @@ async function sortNdjson(inputPath: string, outputPath: string): Promise<void> 
   await waitForStreamFinish(writer);
 
   log(`Finished sort: ${total} items sorted, ${failed} skipped due to parse errors`);
-}
-
-// Entry point – allows command-line execution
-if (require.main === module) {
-  const [, , inputPath, outputPath] = process.argv;
-
-  if (!inputPath || !outputPath) {
-    console.error('Usage: ts-node sortNdjson.ts <inputPath> <outputPath>');
-    process.exit(1);
-  }
-
-  sortNdjson(inputPath, outputPath).catch((err) => {
-    logError(`sortNdjson failed: ${err}`);
-    process.exit(1);
-  });
 }

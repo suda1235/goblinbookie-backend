@@ -1,25 +1,25 @@
 /**
  * Merge Sorted NDJSON
  *
- * This script performs a **memory-safe merge join** between two large, pre-sorted NDJSON files:
+ * Purpose:
+ * This script performs a memory-efficient merge join of two large, pre-sorted NDJSON files:
  *
- * - cardsSorted.ndjson → Sorted card metadata (uuid, name, set, etc.)
- * - pricesSorted.ndjson → Sorted price data (uuid → prices)
+ * - cardsSorted.ndjson: Sorted card metadata (uuid, name, setCode, etc.)
+ * - pricesSorted.ndjson: Sorted price data (uuid → prices object)
  *
- * It produces:
- * - mergedCards.ndjson → Final NDJSON combining metadata and price info per UUID
+ * Output:
+ * - mergedCards.ndjson: Each line is a merged JSON object combining card metadata and its corresponding prices,
+ *   matched by UUID.
  *
- * Why this approach:
- * - We stream both files line-by-line using `readline` to avoid memory exhaustion.
- * - We rely on both files being **pre-sorted by UUID** to enable a linear, efficient merge.
- * - This avoids the need to build a hash map of either file, which would crash on large files.
+ * Why use this approach:
+ * - Both input files are sorted by UUID, so we can process them in a single linear pass.
+ * - We use readline streams and async iterators to handle one line at a time, keeping memory usage very low.
+ * - Avoids the need to build a map or load an entire file into memory, which would be unsafe for large datasets.
  *
- * Implementation notes:
- * - Uses `Symbol.asyncIterator` to manually control `readline` consumption.
- * - Compares UUIDs lexicographically to align matching pairs.
- * - Only writes to output when UUIDs match in both files.
- * - Drops unmatched entries (e.g., cards with no price or vice versa).
- * - Uses a shared `waitForStreamFinish()` utility to ensure output is fully flushed.
+ * Implementation details:
+ * - Each stream is advanced independently, comparing UUIDs lexicographically to find matching pairs.
+ * - Only writes output for UUIDs present in both files; unmatched cards or prices are skipped.
+ * - Uses a waitForStreamFinish utility to guarantee all output is flushed before exiting.
  */
 
 import fs from 'fs';
@@ -28,48 +28,48 @@ import path from 'path';
 import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 async function mergeSortedNdjson(cardFile: string, priceFile: string, outputFile: string) {
-  // Set up line-by-line readers for both sorted input files
+  // Create readline interfaces to stream both input files line by line
   const cardRL = readline.createInterface({ input: fs.createReadStream(cardFile) });
   const priceRL = readline.createInterface({ input: fs.createReadStream(priceFile) });
 
-  // Output writer stream for the final merged NDJSON
+  // Create output stream for merged NDJSON result
   const output = fs.createWriteStream(outputFile, 'utf-8');
 
-  // Manually get async iterators for controlled line reading
+  // Get async iterators for both input streams
   const cardIter = cardRL[Symbol.asyncIterator]();
   const priceIter = priceRL[Symbol.asyncIterator]();
 
-  // Prime both iterators
+  // Prime both iterators with their first lines
   let card = await cardIter.next();
   let price = await priceIter.next();
 
-  // Loop through both files until one is exhausted
+  // Main merge loop: walk through both sorted files in lockstep
   while (!card.done && !price.done) {
     const cardObj = JSON.parse(card.value);
     const priceObj = JSON.parse(price.value);
 
     if (cardObj.uuid < priceObj.uuid) {
-      // Card has no matching price yet → advance card pointer
+      // Card UUID is behind price UUID; advance card stream
       card = await cardIter.next();
     } else if (priceObj.uuid < cardObj.uuid) {
-      // Price has no matching card yet → advance price pointer
+      // Price UUID is behind card UUID; advance price stream
       price = await priceIter.next();
     } else {
-      // UUIDs match → merge metadata + price info into one object
+      // UUIDs match: merge card metadata with price data, write to output
       output.write(JSON.stringify({ ...cardObj, prices: priceObj.prices }) + '\n');
       card = await cardIter.next();
       price = await priceIter.next();
     }
   }
 
-  // Ensure output file is properly flushed and closed
+  // Flush and close output file once done
   output.end();
   await waitForStreamFinish(output);
 
   log('mergedCards.ndjson created');
 }
 
-// Define absolute paths for the input/output files
+// Define input and output file paths and start the merge process
 mergeSortedNdjson(
   path.join(__dirname, '../temp/cardsSorted.ndjson'),
   path.join(__dirname, '../temp/pricesSorted.ndjson'),

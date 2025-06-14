@@ -1,19 +1,24 @@
 /**
  * Parse Price Data (AllPrices.json)
  *
- * This script loads the full MTGJSON AllPrices.json file and extracts the most
- * recent available price per card UUID for each vendor, type, and finish.
+ * Purpose:
+ * This script processes the MTGJSON AllPrices.json file and extracts the most recent
+ * price for each card UUID, vendor, type, and finish, but only for cards that were already
+ * filtered and kept via `parseCards`. The result is a line-by-line NDJSON file of just the
+ * most up-to-date relevant prices.
  *
- * Why we do this:
- * - We only want price data for cards we’ve already filtered and kept (via `parseCards`)
- * - AllPrices.json includes historical data going back 90+ days — we only need the most recent
- * - This keeps Mongo upload size minimal while preserving essential pricing info
+ * Why this script exists:
+ * - MTGJSON's AllPrices.json contains full 90+ day historical data, but for the upload pipeline,
+ *   we only need the latest price for each finish/type/vendor.
+ * - By extracting only the most recent prices and only for known card UUIDs, we minimize
+ *   MongoDB upload size while keeping current pricing info.
+ * - Reduces memory and processing requirements for downstream scripts.
  *
- * Implementation Notes:
- * - We load UUIDs from `parsedCards.ndjson` into a Set to restrict which prices to include
- * - We stream AllPrices.json using `stream-json` to avoid memory overload
- * - We extract only the most recent date entry for each finish/type/vendor
- * - Results are saved to `parsedPrices.ndjson` in NDJSON format
+ * Implementation details:
+ * - Loads UUIDs from `parsedCards.ndjson` into a Set to restrict processing to only relevant cards.
+ * - Streams AllPrices.json using the stream-json library to prevent memory overload.
+ * - For each vendor/type/finish, extracts only the newest date (latest price) and skips all others.
+ * - Writes results as NDJSON (one object per line) to `parsedPrices.ndjson`.
  */
 
 import fs from 'fs';
@@ -28,8 +33,8 @@ import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 const knownUUIDs = new Set<string>();
 
 /**
- * Load UUIDs from parsedCards.ndjson into memory.
- * This restricts which prices we extract to just the cards we kept.
+ * Loads all UUIDs from the parsedCards.ndjson file into a Set.
+ * This ensures we only keep prices for cards that survived earlier filters.
  */
 async function loadUUIDs(cardsPath: string) {
   log('Loading UUIDs from parsedCards.ndjson...');
@@ -56,7 +61,8 @@ async function loadUUIDs(cardsPath: string) {
 }
 
 /**
- * Helper to find the most recent date in a price object (e.g., {"2024-06-01": 2.50, ...})
+ * Given a price object mapping date strings to prices (e.g., {"2024-06-01": 2.50, ...}),
+ * returns the most recent date key (as a string), or null if no valid date found.
  */
 function getMostRecentDate(obj: Record<string, number>): string | null {
   const dates = Object.keys(obj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
@@ -69,7 +75,8 @@ type PriceType = { [type: string]: FinishPrices };
 type VendorPrices = { [vendor: string]: PriceType };
 
 /**
- * Main parsing logic – streams AllPrices.json and extracts prices for known UUIDs only.
+ * Streams AllPrices.json, extracting only the latest price per vendor/type/finish
+ * for each card UUID present in knownUUIDs. Writes results to output NDJSON file.
  */
 async function parsePricesNDJSON() {
   const cardsPath = path.join(__dirname, '../temp/parsedCards.ndjson');
@@ -92,6 +99,7 @@ async function parsePricesNDJSON() {
   pipeline.on('data', ({ key, value }) => {
     processed++;
 
+    // Only process prices for known card UUIDs
     if (!knownUUIDs.has(key)) return;
 
     const pricesToday: VendorPrices = {};
@@ -108,6 +116,7 @@ async function parsePricesNDJSON() {
           const finishData = typeData[finish];
           if (!finishData || typeof finishData !== 'object') continue;
 
+          // Only keep the most recent price date for this vendor/type/finish
           const mostRecentDate = getMostRecentDate(finishData);
           if (!mostRecentDate) continue;
 
@@ -123,6 +132,7 @@ async function parsePricesNDJSON() {
       }
     }
 
+    // Only write out cards with at least one valid price
     if (Object.keys(pricesToday).length > 0) {
       writer.write(JSON.stringify({ uuid: key, prices: pricesToday }) + '\n');
       kept++;
@@ -138,7 +148,7 @@ async function parsePricesNDJSON() {
   pipeline.on('error', (err) => logError(`parsePrices stream failed: ${err}`));
 }
 
-// Start the parsing process
+// Kick off the price parsing process
 parsePricesNDJSON().catch((err) => {
   logError(`parsePrices failed: ${err}`);
 });
