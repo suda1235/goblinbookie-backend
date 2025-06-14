@@ -1,55 +1,53 @@
 /**
- * Cleanup Script
+ * Goblin Bookie – Cleanup Script
  *
- * Purpose:
- * This script removes all temporary files generated in the `/temp` directory during the sync pipeline,
- * except for a single `.keep` file. The `.keep` file ensures that the `/temp` directory is retained
- * in version control systems (like Git) even when empty.
+ * PURPOSE:
+ *   Deletes all temporary files in /temp generated during the sync pipeline,
+ *   except for a single `.keep` file (which ensures the directory is retained in Git).
  *
- * Why cleanup is necessary:
- * - Sync scripts generate large intermediate NDJSON files (parsed, sorted, merged) that quickly consume disk space.
- * - Deleting them after each run keeps the working directory tidy and prevents disk usage from growing over time.
- * - The `.keep` file is intentionally preserved so `/temp` remains available for future pipeline runs.
+ * CONTEXT:
+ *   - The sync process creates large NDJSON files (parsed, sorted, merged) in /temp.
+ *   - Deleting them after each run prevents disk bloat and keeps the working directory tidy.
+ *   - The `.keep` file is intentionally preserved so /temp remains in version control.
+ *   - All logs use [cleanUp.ts] as the tag for easy traceability.
  *
- * Implementation details:
- * - Reads all files in `/temp` using `fs.promises.readdir`.
- * - Filters out the `.keep` file so it is not deleted.
- * - Deletes all other files in parallel using `Promise.all`.
- * - Logs each deleted file and a summary message when cleanup is complete.
- * - On error, logs a descriptive failure message.
+ * IMPLEMENTATION DETAILS:
+ *   - Reads all files in /temp with fs.promises.readdir.
+ *   - Deletes all except `.keep` in parallel with Promise.all.
+ *   - Logs each deletion and a summary, or any errors encountered.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { log, logError } from '../src/utils/jsonHelpers';
+import { logInfo, logError } from '../src/utils/jsonHelpers';
 
 const tempDir = path.join(__dirname, '../temp');
-const keepFile = '.keep'; // File to always retain, used to keep the temp folder under version control
+const keepFile = '.keep'; // File to always retain
 
 /**
- * Deletes all files in the target directory except for the specified file to keep.
+ * Deletes all files in the directory except for the one specified.
  * Logs every file deleted and a summary on completion.
  */
 async function cleanDirectoryExcept(fileToKeep: string) {
   try {
-    // List all files currently in the temp directory
     const files = await fs.promises.readdir(tempDir);
 
-    // Delete all files except the designated keep file, logging each deletion
+    // Delete everything except .keep, log each deletion
     const deletions = files
       .filter((file) => file !== fileToKeep)
       .map((file) =>
-        fs.promises.unlink(path.join(tempDir, file)).then(() => log(`Deleted file: ${file}`))
+        fs.promises
+          .unlink(path.join(tempDir, file))
+          .then(() => logInfo('[cleanUp.ts]', `Deleted file: ${file}`))
       );
 
-    // Wait for all deletions to finish
     await Promise.all(deletions);
 
-    log(`Cleaned directory: ${tempDir} (except ${fileToKeep})`);
+    logInfo('[cleanUp.ts]', `Cleaned directory: ${tempDir} (except ${fileToKeep})`);
   } catch (err: any) {
-    logError(`Cleanup failed: ${err.message}`);
+    logError('[cleanUp.ts]', `Cleanup failed: ${err.message}`);
   }
 }
 
-// Run the cleanup process, preserving only the `.keep` file
+// Start cleanup: only keep the .keep file
 cleanDirectoryExcept(keepFile);

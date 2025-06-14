@@ -1,24 +1,22 @@
 /**
- * Parse Price Data (AllPrices.json)
+ * Goblin Bookie – Parse Price Data (AllPrices.json)
  *
- * Purpose:
- * This script processes the MTGJSON AllPrices.json file and extracts the most recent
- * price for each card UUID, vendor, type, and finish, but only for cards that were already
- * filtered and kept via `parseCards`. The result is a line-by-line NDJSON file of just the
- * most up-to-date relevant prices.
+ * PURPOSE:
+ *   Streams MTGJSON's AllPrices.json and outputs the most recent price for each card UUID,
+ *   for each vendor/type/finish combo, as NDJSON—one card per line. Only includes cards
+ *   present in parsedCards.ndjson (already filtered for English paper cards).
  *
- * Why this script exists:
- * - MTGJSON's AllPrices.json contains full 90+ day historical data, but for the upload pipeline,
- *   we only need the latest price for each finish/type/vendor.
- * - By extracting only the most recent prices and only for known card UUIDs, we minimize
- *   MongoDB upload size while keeping current pricing info.
- * - Reduces memory and processing requirements for downstream scripts.
+ * CONTEXT:
+ *   - AllPrices.json contains 90+ days of data for every card/finish/vendor—much more than is needed for MVP.
+ *   - This script extracts only the most recent price for each (vendor/type/finish) and only for relevant UUIDs,
+ *     reducing output size, upload time, and memory usage downstream.
+ *   - All logs use [parsePrices.ts] as the tag for easy debugging/tracing in /logs/sync.log.
  *
- * Implementation details:
- * - Loads UUIDs from `parsedCards.ndjson` into a Set to restrict processing to only relevant cards.
- * - Streams AllPrices.json using the stream-json library to prevent memory overload.
- * - For each vendor/type/finish, extracts only the newest date (latest price) and skips all others.
- * - Writes results as NDJSON (one object per line) to `parsedPrices.ndjson`.
+ * IMPLEMENTATION DETAILS:
+ *   - Loads all valid card UUIDs into a Set from parsedCards.ndjson before processing prices.
+ *   - Uses stream-json for fully streaming, event-driven processing (no memory bloat).
+ *   - For each UUID, writes the most recent price per vendor/type/finish as one NDJSON object.
+ *   - Logs processed/kept counts so any pipeline breakage is immediately obvious.
  */
 
 import fs from 'fs';
@@ -28,16 +26,16 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
+import { logInfo, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
 const knownUUIDs = new Set<string>();
 
 /**
- * Loads all UUIDs from the parsedCards.ndjson file into a Set.
- * This ensures we only keep prices for cards that survived earlier filters.
+ * Loads all UUIDs from parsedCards.ndjson into a Set, ensuring we process
+ * only relevant card prices (matching previous filters).
  */
 async function loadUUIDs(cardsPath: string) {
-  log('Loading UUIDs from parsedCards.ndjson...');
+  logInfo('[parsePrices.ts]', 'Loading UUIDs from parsedCards.ndjson...');
   let count = 0;
 
   const rl = readline.createInterface({
@@ -53,16 +51,15 @@ async function loadUUIDs(cardsPath: string) {
         count++;
       }
     } catch (err) {
-      logError(`Failed to parse line in parsedCards.ndjson: ${err}`);
+      logError('[parsePrices.ts]', `Failed to parse line in parsedCards.ndjson: ${err}`);
     }
   }
 
-  log(`Loaded ${count} card UUIDs`);
+  logInfo('[parsePrices.ts]', `Loaded ${count} card UUIDs`);
 }
 
 /**
- * Given a price object mapping date strings to prices (e.g., {"2024-06-01": 2.50, ...}),
- * returns the most recent date key (as a string), or null if no valid date found.
+ * Returns the most recent date key from a {date: price} object, or null if none.
  */
 function getMostRecentDate(obj: Record<string, number>): string | null {
   const dates = Object.keys(obj).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
@@ -76,7 +73,7 @@ type VendorPrices = { [vendor: string]: PriceType };
 
 /**
  * Streams AllPrices.json, extracting only the latest price per vendor/type/finish
- * for each card UUID present in knownUUIDs. Writes results to output NDJSON file.
+ * for each card UUID present in knownUUIDs, writing NDJSON output line by line.
  */
 async function parsePricesNDJSON() {
   const cardsPath = path.join(__dirname, '../temp/parsedCards.ndjson');
@@ -99,11 +96,12 @@ async function parsePricesNDJSON() {
   pipeline.on('data', ({ key, value }) => {
     processed++;
 
-    // Only process prices for known card UUIDs
+    // Only process prices for known UUIDs (previously filtered cards)
     if (!knownUUIDs.has(key)) return;
 
     const pricesToday: VendorPrices = {};
 
+    // For each supported vendor (tcgplayer, cardkingdom, cardmarket)
     for (const vendor of ['tcgplayer', 'cardkingdom', 'cardmarket']) {
       const vendorData = value.paper?.[vendor];
       if (!vendorData) continue;
@@ -132,23 +130,27 @@ async function parsePricesNDJSON() {
       }
     }
 
-    // Only write out cards with at least one valid price
+    // Only write if there is at least one price (avoid blank lines)
     if (Object.keys(pricesToday).length > 0) {
       writer.write(JSON.stringify({ uuid: key, prices: pricesToday }) + '\n');
       kept++;
     }
   });
 
+  // Log summary when finished
   pipeline.on('end', async () => {
     writer.end();
     await waitForStreamFinish(writer);
-    log(`parsePrices complete: ${processed} total prices checked, ${kept} matched and written`);
+    logInfo(
+      '[parsePrices.ts]',
+      `parsePrices complete: ${processed} total prices checked, ${kept} matched and written`
+    );
   });
 
-  pipeline.on('error', (err) => logError(`parsePrices stream failed: ${err}`));
+  pipeline.on('error', (err) => logError('[parsePrices.ts]', `Stream failed: ${err}`));
 }
 
-// Kick off the price parsing process
+// Start the process and log if it fails catastrophically
 parsePricesNDJSON().catch((err) => {
-  logError(`parsePrices failed: ${err}`);
+  logError('[parsePrices.ts]', `parsePrices failed: ${err}`);
 });

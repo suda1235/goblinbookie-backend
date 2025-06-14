@@ -1,25 +1,22 @@
 /**
- * Parse Card Metadata (AllIdentifiers.json)
+ * Goblin Bookie – Parse Card Metadata (AllIdentifiers.json)
  *
- * Purpose:
- * This script processes MTGJSON's AllIdentifiers.json and outputs only the English-language
- * paper card entries with required metadata as NDJSON, one card per line. This makes downstream
- * processing faster, lighter, and more memory efficient.
+ * PURPOSE:
+ *   Streams MTGJSON's AllIdentifiers.json and outputs only English-language, paper card entries
+ *   (with required metadata) as NDJSON—one card per line. This filtering step dramatically reduces
+ *   the dataset size for downstream processing and memory efficiency.
  *
- * Why we filter:
- * - AllIdentifiers.json contains hundreds of thousands of entries, many of which are not relevant
- *   (non-English, promos, tokens, digital-only, or missing required fields).
- * - We want to restrict Goblin Bookie to just English paper cards for MVP and keep only the fields needed.
- * - Writing as NDJSON (newline-delimited JSON) enables efficient streaming and later merge operations.
+ * CONTEXT:
+ *   - AllIdentifiers.json is massive and includes digital cards, non-English cards, promos, tokens, etc.
+ *   - We want only English, paper cards with uuid, name, and setCode for Goblin Bookie MVP.
+ *   - Output as NDJSON (newline-delimited) enables safe, memory-efficient streaming in all later scripts.
+ *   - All logs use [parseCards.ts] as a tag for easy tracing/debugging in /logs/sync.log.
  *
- * Implementation details:
- * - Streams the large JSON input using `stream-json` to avoid high memory use.
- * - Filters out non-English entries and any card missing required fields (uuid, name, setCode).
- * - Writes one filtered JSON object per line to the output NDJSON file.
- *
- * Output:
- *   - One line per valid card with the following fields:
- *     uuid, name, setCode, language, scryfallId (optional), purchaseUrls (optional)
+ * IMPLEMENTATION DETAILS:
+ *   - Uses stream-json for memory-efficient, event-based processing of large JSON.
+ *   - Filters out any entry that isn't a standard English paper card or is missing key metadata.
+ *   - Writes results as NDJSON (one valid card per line).
+ *   - Logs total vs. kept counts for quick health check.
  */
 
 import fs from 'fs';
@@ -28,22 +25,23 @@ import { chain } from 'stream-chain';
 import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamObject } from 'stream-json/streamers/StreamObject';
-import { log, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
+import { logInfo, logError, waitForStreamFinish } from '../src/utils/jsonHelpers';
 
+// Define input/output paths (relative to this script)
 const inputPath = path.join(__dirname, '../temp/AllIdentifiers.json');
 const outputPath = path.join(__dirname, '../temp/parsedCards.ndjson');
 
 /**
- * Main function: Streams AllIdentifiers.json, filters for English-language paper cards with
- * required metadata, and writes the result as NDJSON (one JSON object per line).
+ * Streams AllIdentifiers.json, filters for English paper cards with required fields,
+ * writes one minimal JSON object per line (NDJSON), and logs results.
  */
 async function parseCardsNDJSON() {
-  log('Starting parseCards from AllIdentifiers.json');
+  logInfo('[parseCards.ts]', 'Starting parseCards from AllIdentifiers.json');
 
   let total = 0;
   let kept = 0;
 
-  // Set up streaming pipeline to access the "data" field in AllIdentifiers.json
+  // Streaming pipeline: read → parse → pick data → iterate objects
   const pipeline = chain([
     fs.createReadStream(inputPath),
     parser(),
@@ -51,43 +49,42 @@ async function parseCardsNDJSON() {
     streamObject(),
   ]);
 
-  // Set up the NDJSON output writer
+  // NDJSON output writer
   const writer = fs.createWriteStream(outputPath, 'utf-8');
 
-  // Process each card entry from the stream
+  // Main streaming handler: only keep English cards with all key fields
   pipeline.on('data', ({ value }) => {
     total++;
+    if (value.language !== 'English') return; // Only English
+    if (!value.uuid || !value.name || !value.setCode) return; // Only cards with essentials
 
-    // Skip cards that are not English-language
-    if (value.language !== 'English') return;
-
-    // Skip any card missing required fields
-    if (!value.uuid || !value.name || !value.setCode) return;
-
-    // Create minimal card object with only fields needed by Goblin Bookie
+    // Minimal card object: only required fields (+ optional Scryfall/purchaseUrls for downstream)
     const card = {
       uuid: value.uuid,
       name: value.name,
       setCode: value.setCode,
       language: value.language,
-      scryfallId: value.scryfallId, // Optional, for linking to Scryfall
-      purchaseUrls: value.purchaseUrls, // Optional, for buy links
+      scryfallId: value.scryfallId, // Optional: for Scryfall linking
+      purchaseUrls: value.purchaseUrls, // Optional: for buy links
     };
 
     writer.write(JSON.stringify(card) + '\n');
     kept++;
   });
 
-  // When the stream ends, finish writing and log the result
+  // When finished, flush and log stats
   pipeline.on('end', async () => {
     writer.end();
     await waitForStreamFinish(writer);
-    log(`parseCards complete: ${total} total entries, ${kept} cards written`);
+    logInfo(
+      '[parseCards.ts]',
+      `parseCards complete: ${total} total entries, ${kept} cards written`
+    );
   });
 
-  // On stream error, log and report failure
-  pipeline.on('error', (err) => logError(`parseCards stream failed: ${err}`));
+  // Log any stream errors with full context
+  pipeline.on('error', (err) => logError('[parseCards.ts]', `Stream failed: ${err}`));
 }
 
-// Start the parsing process
+// Start the process when the script runs
 parseCardsNDJSON();

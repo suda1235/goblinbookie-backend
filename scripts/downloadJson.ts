@@ -1,80 +1,88 @@
 /**
- * Daily JSON Downloader
+ * Goblin Bookie – Daily JSON Downloader
  *
- * Purpose:
- * This script downloads the two critical MTGJSON data files used by Goblin Bookie:
+ * PURPOSE:
+ *   Downloads the two critical MTGJSON data files needed for the sync pipeline:
+ *     - AllIdentifiers.json: Contains all card metadata for parsing and filtering
+ *     - AllPrices.json: Contains all historical/current price data for all cards
  *
- * - AllIdentifiers.json: Contains comprehensive card metadata (uuid, name, setCode, etc.)
- * - AllPrices.json: Contains both historical and current price data for every card
+ * CONTEXT:
+ *   - This script is the first stage in the daily pipeline. All downstream scripts depend on its output.
+ *   - Files are streamed directly to disk (in /temp) to avoid loading large JSON blobs in memory.
+ *   - Logging uses [downloadJson.ts] as the tag, so every log line is easily searchable and traceable to this script.
  *
- * Why this is needed:
- * - These files are the starting point for the entire sync pipeline; all parsing and merging depend on them.
- * - Both files are very large, so the download is streamed directly to disk to prevent memory overload.
- * - Files are saved to the `/temp` directory for subsequent scripts to process.
+ * IMPLEMENTATION DETAILS:
+ *   - Uses Node's https/fs modules only (no extra dependencies for downloading).
+ *   - Cleans up incomplete files on download failure for safety.
+ *   - Ensures the /temp directory exists before attempting to write.
+ *   - All log output is standardized with [downloadJson.ts] for clarity in /logs/sync.log.
  *
- * Implementation details:
- * - Uses Node's native `https` module for HTTP requests (no extra dependencies).
- * - Streams each response to disk efficiently, line by line.
- * - Cleans up incomplete files and handles network/HTTP errors gracefully.
- * - Logs the status of each download for monitoring and debugging.
+ *   Written for <2GB RAM deployment (e.g. Render), fully streaming, and follows best practices for assignment submission.
  */
 
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { log, logError } from '../src/utils/jsonHelpers';
+import { logInfo, logError, ensureDirExists } from '../src/utils/jsonHelpers';
 
+// Resolve the temp directory path relative to this script
 const destinationDir = path.join(__dirname, '../temp');
 
+// Ensure /temp exists before starting any downloads (avoids fs errors)
+ensureDirExists(destinationDir);
+
 /**
- * Downloads a file from the specified URL and saves it directly to disk.
- * Handles partial downloads and errors by cleaning up any incomplete files.
+ * Downloads a file from the given URL and writes it directly to disk.
+ * Handles partial downloads: deletes any incomplete file if an error occurs.
+ * All log messages are tagged [downloadJson.ts] for traceability.
+ *
+ * @param url {string} – The URL to download from
+ * @param filename {string} – The filename to save in /temp
+ * @returns Promise<void>
  */
 async function downloadFile(url: string, filename: string) {
   return new Promise<void>((resolve, reject) => {
     const filePath = path.join(destinationDir, filename);
     const file = fs.createWriteStream(filePath);
 
+    // Start the HTTPS download
     https
       .get(url, (response) => {
+        // If response code isn't 200 OK, treat as a failure (don't log here—handled in main catch)
         if (response.statusCode !== 200) {
-          // Abort on non-success HTTP status
           return reject(new Error(`Failed: ${response.statusCode}`));
         }
 
-        // Stream the response directly into the file
+        // Stream the response into the file (memory-safe)
         response.pipe(file);
 
-        // Resolve once writing is complete
+        // Once writing is done, log success
         file.on('finish', () =>
           file.close(() => {
-            log(`Downloaded ${filename}`);
+            logInfo('[downloadJson.ts]', `Downloaded ${filename}`);
             resolve();
           })
         );
       })
       .on('error', (err) => {
-        // Delete the partial file on any error
+        // On any error, clean up the partial file and log the error
         fs.unlink(filePath, () => {});
-        logError(`Failed downloading ${filename}: ${err.message}`);
+        logError('[downloadJson.ts]', `Failed downloading ${filename}: ${err.message}`);
         reject(err);
       });
   });
 }
 
-// Main script: Download both MTGJSON files in sequence
+// MAIN: Download both files in sequence, with log output at each stage
 (async () => {
   try {
-    log(`Starting daily download...`);
+    logInfo('[downloadJson.ts]', 'Starting daily download...');
 
-    // Download the card metadata file
     await downloadFile('https://mtgjson.com/api/v5/AllIdentifiers.json', 'AllIdentifiers.json');
-
-    // Download the price history file
     await downloadFile('https://mtgjson.com/api/v5/AllPrices.json', 'AllPrices.json');
 
-    log('Finished downloading daily MTGJSON files.');
+    logInfo('[downloadJson.ts]', 'Finished downloading daily MTGJSON files.');
   } catch (err) {
-    logError(`Download process failed: ${err}`);
+    logError('[downloadJson.ts]', `Download process failed: ${err}`);
   }
 })();

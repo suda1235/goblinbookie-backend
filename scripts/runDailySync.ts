@@ -1,72 +1,77 @@
 /**
- * Master Runner Script
+ * Goblin Bookie – Master Runner Script (Pipeline Orchestrator)
  *
- * Overview:
- * This script orchestrates the entire Goblin Bookie daily sync pipeline by running
- * each data-processing step in sequence. It ensures that all necessary files are created,
- * sorted, and merged correctly, and that your MongoDB database is updated with the latest
- * price history. It also cleans up temporary files at the end.
+ * PURPOSE:
+ *   Runs the entire Goblin Bookie daily sync pipeline, one step at a time, in a fixed order.
+ *   Ensures that:
+ *     - Fresh MTGJSON data is downloaded,
+ *     - Card and price data are parsed and filtered,
+ *     - Outputs are sorted, merged, and uploaded to MongoDB,
+ *     - All temp files are cleaned up.
  *
- * When to use:
- * - Run this script manually or set it as a scheduled cron job to keep your database in sync with MTGJSON.
- * - Guarantees proper step ordering so no part of the pipeline runs with missing or out-of-date input.
- * - All script output and errors are printed directly to your console due to `stdio: 'inherit'`.
+ * CONTEXT:
+ *   - Run this manually or via a scheduled cron job (e.g., on Render or server) to keep your database in sync.
+ *   - Each step is a separate TypeScript script, invoked with `npx ts-node` so you never need to precompile.
+ *   - If any step fails, the pipeline stops immediately and exits with a non-zero code.
+ *   - All script output and errors appear in your terminal/console, and logs from each child script
+ *     are handled by their own logging helpers (see /logs/sync.log).
  *
- * Pipeline steps:
- *  1. Download raw MTGJSON data files (AllIdentifiers.json, AllPrices.json)
- *  2. Parse card data to produce `parsedCards.ndjson`
- *  3. Parse price data to produce `parsedPrices.ndjson`
- *  4. Sort both NDJSON files by UUID for efficient merging
- *  5. Merge card and price data into `mergedCards.ndjson`
- *  6. Upload the merged data to MongoDB (using upserts for each card)
- *  7. Clean up temporary files, preserving any `.keep` files in the temp directory
+ * PIPELINE STEPS:
+ *   1. Download MTGJSON files (AllIdentifiers.json, AllPrices.json)
+ *   2. Parse cards (outputs parsedCards.ndjson)
+ *   3. Parse prices (outputs parsedPrices.ndjson)
+ *   4. Sort both NDJSON files by UUID (cardsSorted.ndjson, pricesSorted.ndjson)
+ *   5. Merge card and price data into mergedCards.ndjson
+ *   6. Upload merged data to MongoDB
+ *   7. Clean up temp files (preserving .keep for version control)
  *
- * Implementation notes:
- * - Uses `execSync` to block and wait for each step to complete before starting the next.
- * - If any step fails, the script exits immediately with an error code.
- * - Each sub-script is run via `npx ts-node`, allowing you to use TypeScript scripts without precompiling.
+ * IMPLEMENTATION DETAILS:
+ *   - Uses `execSync` to block and wait for each step before starting the next (safe, deterministic).
+ *   - Uses path.join(__dirname, ...) so it works no matter where script is launched from.
+ *   - All paths are relative to project root for portability.
+ *   - No direct logging from this script—all logs are handled by sub-scripts.
  */
 
 import { execSync } from 'child_process';
 import path from 'path';
 
-// Helper to run a TypeScript script synchronously and inherit console output
+// Helper: Run a TypeScript script synchronously, inheriting stdio (output/errors)
+// so all logs/errors are visible in your terminal as each step runs.
 const runScript = (script: string) =>
   execSync(`npx ts-node ${path.join(__dirname, script)}`, { stdio: 'inherit' });
 
+// Directory containing temp/intermediate NDJSON files
 const tempDir = path.join(__dirname, '../temp');
 
 async function runAll() {
   try {
-    // STEP 1: Download raw MTGJSON files
+    // STEP 1: Download raw MTGJSON files (AllIdentifiers.json, AllPrices.json)
     runScript('downloadJson.ts');
 
-    // STEP 2: Parse AllIdentifiers.json to NDJSON cards
+    // STEP 2: Parse card data into parsedCards.ndjson
     runScript('parseCards.ts');
 
-    // STEP 3: Parse AllPrices.json to NDJSON prices
+    // STEP 3: Parse price data into parsedPrices.ndjson
     runScript('parsePrices.ts');
 
-    // STEP 4: Sort both NDJSON files by UUID for merge join
-    runScript(
-      `sortNdjson.ts ${path.join(tempDir, 'parsedCards.ndjson')} ${path.join(tempDir, 'cardsSorted.ndjson')}`
-    );
-    runScript(
-      `sortNdjson.ts ${path.join(tempDir, 'parsedPrices.ndjson')} ${path.join(tempDir, 'pricesSorted.ndjson')}`
-    );
+    // STEP 4: Sort NDJSON files by UUID for streaming merge
+    runScript('sortCards.ts');
+    runScript('sortPrices.ts');
 
-    // STEP 5: Merge the two sorted NDJSON files into a merged file
+    // STEP 5: Merge card and price data into mergedCards.ndjson
     runScript('mergeSortedNdjson.ts');
 
-    // STEP 6: Upload the merged card+price data to MongoDB
+    // STEP 6: Upload merged data to MongoDB
     runScript('uploadToMongo.ts');
 
-    // STEP 7: Remove temp NDJSON files, but keep .keep files
+    // STEP 7: Clean up temp files (keeps .keep for git)
     runScript('cleanUp.ts');
   } catch (error) {
-    console.error(`Pipeline failed: ${error}`);
+    // If any step fails, log and exit with error
+    console.error(`[runDailySync.ts] Pipeline failed: ${error}`);
     process.exit(1);
   }
 }
 
+// Start pipeline when script is run
 runAll();
