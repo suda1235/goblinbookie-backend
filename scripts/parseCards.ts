@@ -64,7 +64,7 @@ async function parseCardsNDJSON() {
       name: value.name,
       setCode: value.setCode,
       language: value.language,
-      scryfallId: value.scryfallId, // Optional: for Scryfall linking
+      scryfallId: value.identifiers?.scryfallId, // Optional: for Scryfall linking
       purchaseUrls: value.purchaseUrls, // Optional: for buy links
     };
 

@@ -23,6 +23,7 @@ const cardSchema = new mongoose.Schema({
     cardkingdom: priceListSchema,
     cardmarket: priceListSchema,
   },
+  imageUrl: { type: String, default: '/images/PlaceHolder.png' },
 });
 
 export default mongoose.model('Card', cardSchema);

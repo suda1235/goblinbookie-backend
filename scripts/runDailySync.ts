@@ -41,8 +41,7 @@ const runScript = (script: string) =>
   execSync(`npx ts-node ${path.join(__dirname, script)}`, { stdio: 'inherit' });
 
 // Directory containing temp/intermediate NDJSON files
-const tempDir = path.join(__dirname, '../temp');
-
+path.join(__dirname, '../temp');
 async function runAll() {
   try {
     // STEP 1: Download raw MTGJSON files (AllIdentifiers.json, AllPrices.json)
@@ -66,6 +65,9 @@ async function runAll() {
 
     // STEP 7: Clean up temp files (keeps .keep for git)
     runScript('cleanUp.ts');
+
+    // STEP 8: Sync Scryfall images for missing imageUrls
+    runScript('syncScryfallImages.ts');
   } catch (error) {
     // If any step fails, log and exit with error
     console.error(`[runDailySync.ts] Pipeline failed: ${error}`);
