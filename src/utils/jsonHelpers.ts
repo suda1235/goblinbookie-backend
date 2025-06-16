@@ -19,7 +19,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
 import { logger } from './logger';
 
 /**
@@ -27,7 +26,7 @@ import { logger } from './logger';
  * Example: logInfo('parseCards', 'Total: 55000, Kept: 48750')
  */
 export function logInfo(tag: string, message: string) {
-  logger.info(`[${tag}] ${message}`);
+  logger.info(`${tag} ${message}`);
 }
 
 /**

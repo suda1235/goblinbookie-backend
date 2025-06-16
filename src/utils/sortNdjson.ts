@@ -22,7 +22,6 @@
  *   Example: ts-node sortNdjson.ts data/parsedCards.ndjson data/cardsSorted.ndjson
  */
 
-// src/utils/sortNdjson.ts
 import fs from 'fs';
 import readline from 'readline';
 import { logInfo, logError, waitForStreamFinish } from './jsonHelpers';

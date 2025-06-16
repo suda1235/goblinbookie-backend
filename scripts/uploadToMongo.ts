@@ -16,7 +16,6 @@
  *   - For each card, loads prior prices (if present), deep-merges new data in
  *   - All writes are batched to minimize DB round trips (faster, safer for large datasets)
  *   - Disconnects from MongoDB only after all upserts and flushes
- *   - Progress log every 5000 cards so you can quickly verify nothing is stuck
  *   - Logs summary at the end
  */
 
@@ -70,7 +69,7 @@ async function uploadNDJSON(filePath: string) {
   for await (const line of rl) {
     const card = JSON.parse(line);
 
-    // Load existing prices from DB by uuid (lean for speed)
+    // Load existing prices from DB by uuid
     const existing = await Card.findOne({ uuid: card.uuid }, { prices: 1 }).lean();
 
     // Merge in today’s prices, preserving all historical data
@@ -91,8 +90,6 @@ async function uploadNDJSON(filePath: string) {
       await Card.bulkWrite(buffer);
       total += buffer.length;
       buffer.length = 0;
-
-      if (total % 5000 === 0) logInfo('[uploadToMongo.ts]', `Uploaded ${total} cards so far...`);
     }
   }
 
