@@ -18,7 +18,7 @@
  */
 
 import fs from 'fs';
-import path from 'path';
+
 import { logger } from './logger';
 
 /**
@@ -49,16 +49,6 @@ export function waitForStreamFinish(stream: fs.WriteStream): Promise<void> {
 }
 
 /**
- * Creates a write stream with UTF-8 encoding and error logging.
- * DRYs up file writer creation and ensures all errors are caught and logged.
- */
-export function safeCreateWriteStream(filePath: string): fs.WriteStream {
-  const stream = fs.createWriteStream(filePath, 'utf-8');
-  stream.on('error', (err) => logError('stream', `WriteStream error for ${filePath}: ${err}`));
-  return stream;
-}
-
-/**
  * Ensures the specified directory exists; creates it recursively if missing.
  * Prevents file system errors on first run or after cleanup.
  */
@@ -66,24 +56,5 @@ export function ensureDirExists(dirPath: string) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
     logInfo('helper', `Created missing directory: ${dirPath}`);
-  }
-}
-
-/**
- * Deletes all files in a directory except for a designated file (e.g., `.keep`).
- * Used for cleaning up temp files after pipeline runs.
- */
-export async function cleanDirectoryExcept(dir: string, fileToKeep: string) {
-  try {
-    const files = await fs.promises.readdir(dir);
-    const deletions = files
-      .filter((f) => f !== fileToKeep)
-      .map((f) =>
-        fs.promises.unlink(path.join(dir, f)).then(() => logInfo('cleanUp', `Deleted file: ${f}`))
-      );
-    await Promise.all(deletions);
-    logInfo('cleanUp', `Cleaned ${dir} (except ${fileToKeep})`);
-  } catch (err: any) {
-    logError('cleanUp', `Cleanup failed: ${err.message}`);
   }
 }
