@@ -1,27 +1,15 @@
 {
   "name": "goblinbookie-backend",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "daily": "ts-node scripts/runDailySync.ts"
-  },
-  "keywords": [],
-  "author": "",
+  "description": "Goblin Bookie backend API for MTG card price tracking.",
+  "author": "Tim Soetemans",
   "license": "ISC",
-  "description": "",
-  "devDependencies": {
-    "@types/cors": "^2.8.18",
-    "@types/node": "^22.15.31",
-    "@types/nodemailer": "^6.4.17",
-    "@types/stream-chain": "^2.1.0",
-    "@types/stream-json": "^1.7.8",
-    "nodemon": "^3.1.10",
-    "prettier": "^3.5.3",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.8.3"
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "daily": "ts-node scripts/runDailySync.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@types/express": "^4.17.23",
@@ -32,6 +20,20 @@
     "node-downloader-helper": "^2.1.9",
     "nodemailer": "^7.0.3",
     "stream-json": "^1.9.1",
-    "winston": "^3.17.0"
-  }
+    "winston": "^3.17.0",
+    "ts-node": "^10.9.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.18",
+    "@types/node": "^22.15.31",
+    "@types/nodemailer": "^6.4.17",
+    "@types/stream-chain": "^2.1.0",
+    "@types/stream-json": "^1.7.8",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.5.3",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.8.3"
+  },
+  "keywords": []
 }
+
