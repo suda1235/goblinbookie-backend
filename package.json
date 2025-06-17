@@ -21,6 +21,7 @@
     "nodemailer": "^7.0.3",
     "stream-json": "^1.9.1",
     "winston": "^3.17.0",
+    "@types/cors": "^2.8.18",
     "ts-node": "^10.9.2"
   },
   "devDependencies": {
