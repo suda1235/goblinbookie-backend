@@ -20,12 +20,11 @@
     "node-downloader-helper": "^2.1.9",
     "nodemailer": "^7.0.3",
     "stream-json": "^1.9.1",
-    "winston": "^3.17.0",
-    "@types/cors": "^2.8.18",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.18",
+    "@types/cors": "^2.8.19",
     "@types/node": "^22.15.31",
     "@types/nodemailer": "^6.4.17",
     "@types/stream-chain": "^2.1.0",
@@ -37,4 +36,3 @@
   },
   "keywords": []
 }
-
