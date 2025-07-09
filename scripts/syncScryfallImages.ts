@@ -1,4 +1,19 @@
-// scripts/syncScryfallImages.ts
+/**
+ * Goblin Bookie – Scryfall Image Sync Script
+ *
+ * PURPOSE:
+ *   Scans the MongoDB 'Card' collection for cards missing an image URL or still using the placeholder,
+ *   fetches card images from Scryfall using their API, and updates the `imageUrl` field in the database.
+ *   This step ensures every card in the Goblin Bookie database displays a real card image when available.
+ *
+ * IMPLEMENTATION DETAILS:
+ *   - Connects to MongoDB using Mongoose and pulls cards missing `imageUrl` or with the placeholder image.
+ *   - Fetches image data from Scryfall’s API using each card’s `scryfallId`.
+ *   - Updates each card in the database with the fetched image URL (or resets to placeholder if not found).
+ *   - Uses batching to process large collections efficiently without overloading memory or Scryfall’s rate limits.
+ *   - Handles Scryfall rate limits (HTTP 429) by waiting and retrying once before skipping.
+ *   - Waits 100ms between API calls to avoid hitting Scryfall’s API rate limits.
+ */
 
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';

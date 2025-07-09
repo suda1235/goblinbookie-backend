@@ -1,3 +1,11 @@
+/**
+ * Goblin Bookie – Card Sorter Script
+ *
+ * PURPOSE:
+ *   Sorts the parsed cards NDJSON file by UUID to prepare for efficient merging and database upload.
+ *   Ensures that card data is consistently ordered, which is critical for line-by-line streaming merges and updates.
+ */
+
 import path from 'path';
 import sortNdjson from '../src/utils/sortNdjson';
 

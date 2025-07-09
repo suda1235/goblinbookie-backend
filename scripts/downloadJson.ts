@@ -9,13 +9,11 @@
  * CONTEXT:
  *   - This script is the first stage in the daily pipeline. All downstream scripts depend on its output.
  *   - Files are streamed directly to disk (in /temp) to avoid loading large JSON blobs in memory.
- *   - Logging uses [downloadJson.ts] as the tag, so every log line is easily searchable and traceable to this script.
  *
  * IMPLEMENTATION DETAILS:
  *   - Uses Node's https/fs modules only (no extra dependencies for downloading).
  *   - Cleans up incomplete files on download failure for safety.
  *   - Ensures the /temp directory exists before attempting to write.
- *   - All log output is standardized with [downloadJson.ts] for clarity in /logs/sync.log.
  *
  *   Written for <2GB RAM deployment (e.g. Render), fully streaming, and follows best practices for assignment submission.
  */
@@ -34,7 +32,6 @@ ensureDirExists(destinationDir);
 /**
  * Downloads a file from the given URL and writes it directly to disk.
  * Handles partial downloads: deletes any incomplete file if an error occurs.
- * All log messages are tagged [downloadJson.ts] for traceability.
  *
  * @param url {string} – The URL to download from
  * @param filename {string} – The filename to save in /temp
@@ -45,7 +42,6 @@ async function downloadFile(url: string, filename: string) {
     const filePath = path.join(destinationDir, filename);
     const file = fs.createWriteStream(filePath);
 
-    // Start the HTTPS download
     https
       .get(url, (response) => {
         // If response code isn't 200 OK, treat as a failure (don't log here—handled in main catch)

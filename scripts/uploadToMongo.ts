@@ -6,11 +6,6 @@
  *   into the card’s historical price history so nothing is lost. Ensures Goblin Bookie can build
  *   a growing, time-series price database for each card, and avoids memory bloat at every stage.
  *
- * CONTEXT:
- *   - Input: mergedCards.ndjson (from mergeSortedNdjson step)
- *   - Output: All cards upserted in MongoDB with fully accumulated price history
- *   - All logs use [uploadToMongo.ts] as the tag for traceability
- *
  * IMPLEMENTATION DETAILS:
  *   - Streams NDJSON, parses and buffers upsert operations (500 per batch for efficiency)
  *   - For each card, loads prior prices (if present), deep-merges new data in

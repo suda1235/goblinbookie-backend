@@ -10,16 +10,10 @@
  *   - Both parsedCards.ndjson and parsedPrices.ndjson must be sorted by UUID before the merge step,
  *     so the merge can happen efficiently as a linear, streaming operation.
  *   - Sorting is done in memory (safe for pre-filtered files <1GB, as on Render's 2GB limit).
- *   - If you ever outgrow this, swap to an external sort or streaming algorithm.
- *   - All logs use [sortNdjson.ts] as the tag for easy filtering in /logs/sync.log.
  *
  * ERROR HANDLING:
  *   - Lines that cannot be parsed as valid JSON are logged and skipped (no crash).
  *   - Summary logs total, skipped, and output path at the end.
- *
- * USAGE:
- *   ts-node sortNdjson.ts <inputPath> <outputPath>
- *   Example: ts-node sortNdjson.ts data/parsedCards.ndjson data/cardsSorted.ndjson
  */
 
 import fs from 'fs';

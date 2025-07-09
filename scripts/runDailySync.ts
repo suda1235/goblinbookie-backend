@@ -35,12 +35,9 @@
 import { execSync } from 'child_process';
 import path from 'path';
 
-// Helper: Run a TypeScript script synchronously, inheriting stdio (output/errors)
-// so all logs/errors are visible in your terminal as each step runs.
 const runScript = (script: string) =>
   execSync(`npx ts-node ${path.join(__dirname, script)}`, { stdio: 'inherit' });
 
-// Directory containing temp/intermediate NDJSON files
 path.join(__dirname, '../temp');
 async function runAll() {
   try {

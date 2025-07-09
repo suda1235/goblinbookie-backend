@@ -1,3 +1,26 @@
+/**
+ * Goblin Bookie – Express Backend Entry Point
+ *
+ * PURPOSE:
+ *   Initializes and runs the Express server for the Goblin Bookie API.
+ *   Connects to MongoDB, sets up REST routes, serves images, and configures middleware for JSON and CORS.
+ *
+ * CONTEXT:
+ *   - This is the main entry point for the backend application.
+ *   - Responsible for starting the API, handling requests, and exposing all endpoints (cards, health check, images).
+ *   - Used in both development (local) and production (e.g., Render, Railway) environments.
+ *
+ * IMPLEMENTATION DETAILS:
+ *   - Loads environment variables with dotenv for secrets/config management.
+ *   - Sets up CORS to allow cross-origin API calls from your frontend.
+ *   - Configures Express to parse JSON bodies and serve static images from the /images directory.
+ *   - All core card API logic is delegated to the `/routes/cards` router.
+ *   - Provides a `/health` endpoint for deployment health checks (used by Render/hosting providers).
+ *   - Provides a `/ping` endpoint for simple liveness checks (manual or for uptime monitoring).
+ *   - Uses Mongoose to connect to MongoDB and log connection status.
+ *   - Starts the Express server only after MongoDB connection is confirmed, ensuring no API calls are handled with a disconnected DB.
+ */
+
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';

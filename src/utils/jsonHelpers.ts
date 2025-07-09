@@ -14,7 +14,6 @@
  * MAINTENANCE:
  *   - Update logging format or stream safety once here—improves every script at once.
  *   - Keeps scripts focused on business logic, not boilerplate.
- *   - Fully documented for future maintainers, instructors, and yourself.
  */
 
 import fs from 'fs';

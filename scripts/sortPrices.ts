@@ -1,3 +1,11 @@
+/**
+ * Goblin Bookie – Price Sorter Script
+ *
+ * PURPOSE:
+ *   Sorts the parsed prices NDJSON file by UUID, ensuring the data is ordered for efficient, memory-safe merging and upload.
+ *   This is essential for the next pipeline phase, which requires both card and price files to be sorted identically.
+ */
+
 import path from 'path';
 import sortNdjson from '../src/utils/sortNdjson';
 

@@ -10,7 +10,8 @@
  *   - AllPrices.json contains 90+ days of data for every card/finish/vendor—much more than is needed for MVP.
  *   - This script extracts only the most recent price for each (vendor/type/finish) and only for relevant UUIDs,
  *     reducing output size, upload time, and memory usage downstream.
- *   - All logs use [parsePrices.ts] as the tag for easy debugging/tracing in /logs/sync.log.
+ *     only the most recent price is taken because ive already populated existing cards with 90 days of historical pricing,
+ *     so we just add the new days to the historical data.
  *
  * IMPLEMENTATION DETAILS:
  *   - Loads all valid card UUIDs into a Set from parsedCards.ndjson before processing prices.

@@ -12,14 +12,12 @@
  *   - This script is the critical “join” step in the daily sync pipeline.
  *   - Both input files are sorted by uuid, enabling a single linear pass (no in-memory maps, very low RAM).
  *   - This approach ensures the pipeline can handle huge datasets even on low-memory environments (<2GB).
- *   - Logging is standardized using [mergeSortedNdjson.ts] as the log tag for all output.
  *
  * IMPLEMENTATION DETAILS:
  *   - Uses Node's readline + async iterators for true line-by-line streaming.
  *   - Only outputs lines for uuids present in *both* files (cards *and* prices).
  *   - All file paths are relative to the current script.
  *   - All writes are streamed; output is flushed using waitForStreamFinish before exit.
- *   - Any error will be logged and surfaced using the [mergeSortedNdjson.ts] tag.
  */
 
 import fs from 'fs';

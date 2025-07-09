@@ -10,7 +10,6 @@
  *   - AllIdentifiers.json is massive and includes digital cards, non-English cards, promos, tokens, etc.
  *   - We want only English, paper cards with uuid, name, and setCode for Goblin Bookie MVP.
  *   - Output as NDJSON (newline-delimited) enables safe, memory-efficient streaming in all later scripts.
- *   - All logs use [parseCards.ts] as a tag for easy tracing/debugging in /logs/sync.log.
  *
  * IMPLEMENTATION DETAILS:
  *   - Uses stream-json for memory-efficient, event-based processing of large JSON.
