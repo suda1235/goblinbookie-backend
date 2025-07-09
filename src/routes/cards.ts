@@ -8,13 +8,11 @@
  * - `/api/cards/random` : Return a random card's UUID from the DB (frontend follows up for full details)
  * - `/api/cards/:uuid`  : Get full detail (including all vendor/finish price aggregates + history) for one card
  *
- *
- * **Key Details:**
+ * Key Details:
  * - Handles partial-name search using Mongo regex, paginated for performance.
  * - Summarizes price info across multiple vendors and finishes.
- * - Always returns a placeholder image for now, for future Scryfall integration.
+ * - Uses real card image URLs from the database, falling back to placeholder if missing.
  * - Always memory-safe: No route loads the entire card DB into RAM.
- *
  */
 
 import express from 'express';
@@ -22,8 +20,6 @@ import Card from '../models/Card';
 
 const router = express.Router();
 
-// Currently, all cards use a static placeholder image.
-// Replace with Scryfall logic if you wire up image lookups later.
 const PLACEHOLDER_IMG = '/images/PlaceHolder.png';
 
 /** Helper: round a nullable number to two decimals, or return null. */
@@ -36,11 +32,6 @@ function round2(num: number | null): number | null {
  *
  * Paginated search for cards by (partial) name.
  * Returns a summary for each card: uuid, name, set, average retail/buylist prices (all vendors), and weekly % change.
- *
- * Query params:
- * - name (string, optional)   : substring search (case-insensitive)
- * - page (int, optional)      : which result page (default 1)
- * - limit (int, optional)     : cards per page (default 20)
  */
 router.get('/cards', async (req, res) => {
   try {
@@ -58,13 +49,9 @@ router.get('/cards', async (req, res) => {
     const cards = await Card.find(filter)
       .skip((page - 1) * limit)
       .limit(limit)
-      .select('uuid name setCode scryfallId prices')
+      .select('uuid name setCode scryfallId prices imageUrl')
       .exec();
 
-    /**
-     * Helper: Get the latest price for a type ('retail' or 'buylist') from the prices object.
-     * Handles missing fields and different MongoDB number encodings.
-     */
     function getLatestPrice(priceObj: any, type: 'retail' | 'buylist') {
       if (!priceObj || !priceObj[type] || !priceObj[type].normal) return null;
       const dates = Object.keys(priceObj[type].normal);
@@ -79,7 +66,6 @@ router.get('/cards', async (req, res) => {
       return typeof value === 'number' ? value : null;
     }
 
-    /** Helper: Get the price from exactly one week ago (7 entries back) */
     function getWeekAgoPrice(priceObj: any, type: 'retail' | 'buylist') {
       if (!priceObj || !priceObj[type] || !priceObj[type].normal) return null;
       const dates = Object.keys(priceObj[type].normal).sort();
@@ -93,15 +79,12 @@ router.get('/cards', async (req, res) => {
       return typeof value === 'number' ? value : null;
     }
 
-    // List of price vendors to check
     const vendorNames = ['tcgplayer', 'cardkingdom', 'cardmarket'];
 
-    // Build the response summary for each card found
     const response = cards.map((card) => {
-      // Always use placeholder image for now
-      const imageUrl = PLACEHOLDER_IMG;
+      // Use imageUrl from DB, fallback to placeholder
+      const imageUrl = card.imageUrl || PLACEHOLDER_IMG;
 
-      // Compute average latest retail price across vendors
       const vendorRetailPrices = vendorNames
         .map((vendor) => getLatestPrice((card.prices as any)?.[vendor], 'retail'))
         .filter((p) => typeof p === 'number');
@@ -109,7 +92,6 @@ router.get('/cards', async (req, res) => {
         ? vendorRetailPrices.reduce((a, b) => a + b, 0) / vendorRetailPrices.length
         : null;
 
-      // Compute average latest buylist price across vendors
       const vendorBuylistPrices = vendorNames
         .map((vendor) => getLatestPrice((card.prices as any)?.[vendor], 'buylist'))
         .filter((p) => typeof p === 'number');
@@ -117,7 +99,6 @@ router.get('/cards', async (req, res) => {
         ? vendorBuylistPrices.reduce((a, b) => a + b, 0) / vendorBuylistPrices.length
         : null;
 
-      // Compute weekly % change in retail price, averaged across vendors
       const retailChanges = vendorNames
         .map((vendor) => {
           const latest = getLatestPrice((card.prices as any)?.[vendor], 'retail');
@@ -132,7 +113,6 @@ router.get('/cards', async (req, res) => {
         ? retailChanges.reduce((a, b) => a + b, 0) / retailChanges.length
         : null;
 
-      // Same for buylist prices
       const buylistChanges = vendorNames
         .map((vendor) => {
           const latest = getLatestPrice((card.prices as any)?.[vendor], 'buylist');
@@ -170,13 +150,9 @@ router.get('/cards', async (req, res) => {
  * GET /api/cards/random
  *
  * Returns a random card's UUID from the database.
- *
- * Why $sample? Uses MongoDB's native aggregation to *randomly* pick one doc, very memory-efficient even with 90k+ cards.
- * Frontend then calls `/api/cards/:uuid` to fetch the actual details.
  */
 router.get('/cards/random', async (req, res) => {
   try {
-    // $sample avoids loading the whole DB or doing a full scan
     const [card] = await Card.aggregate([{ $sample: { size: 1 } }]);
     if (!card) {
       return res.status(404).json({ error: 'No cards found in database.' });
@@ -192,17 +168,6 @@ router.get('/cards/random', async (req, res) => {
  * GET /api/cards/:uuid
  *
  * Returns full detail for a single card.
- * - Vendor-by-vendor and finish-by-finish breakdown
- * - Price history (daily averages, per finish)
- *
- * Example structure:
- * {
- *   uuid, name, set, imageUrl,
- *   finishes: ['normal', 'foil'],
- *   prices: { retail: {normal: {...}}, buylist: {normal: {...}} },
- *   vendors: [ {vendor, purchaseUrl, prices: {...}}, ... ],
- *   history: [{ date, retail: {normal: X, foil: Y}, buylist: {...}}, ... ]
- * }
  */
 router.get('/cards/:uuid', async (req, res) => {
   try {
@@ -213,10 +178,10 @@ router.get('/cards/:uuid', async (req, res) => {
       return res.status(404).json({ error: 'Card not found' });
     }
 
-    const imageUrl = '/images/PlaceHolder.png';
+    // Use imageUrl from DB, fallback to placeholder
+    const imageUrl = card.imageUrl || PLACEHOLDER_IMG;
     const vendorNames = ['tcgplayer', 'cardkingdom', 'cardmarket'];
 
-    /** Finds all finishes present for this card, across all vendors/types (e.g., "normal", "foil", "etched") */
     function findAllFinishes(prices: any) {
       const finishes = new Set<string>();
       for (const vendor of vendorNames) {
@@ -234,7 +199,6 @@ router.get('/cards/:uuid', async (req, res) => {
 
     const allFinishes = findAllFinishes(card.prices);
 
-    /** Get the latest price for a finish/type from a vendor's price object */
     function getLatestForFinish(priceObj: any, type: 'retail' | 'buylist', finish: string) {
       if (!priceObj || !priceObj[type] || !priceObj[type][finish]) return null;
       const dates = Object.keys(priceObj[type][finish]);
@@ -249,10 +213,6 @@ router.get('/cards/:uuid', async (req, res) => {
       return typeof value === 'number' ? value : null;
     }
 
-    /**
-     * Build a vendor-by-vendor table: for each, latest prices for every finish/type.
-     * Also includes purchaseUrl for that vendor (if any).
-     */
     const vendors = vendorNames.map((vendor) => {
       const vendorObj: any = {
         vendor,
@@ -269,10 +229,6 @@ router.get('/cards/:uuid', async (req, res) => {
       return vendorObj;
     });
 
-    /**
-     * For each finish/type, compute low/avg/high across all vendors (for display).
-     * Each value is null if no price available.
-     */
     function getFinishAggregates(type: 'retail' | 'buylist', finish: string) {
       const vals = vendors.map((v) => v.prices[type][finish]).filter((x) => typeof x === 'number');
       return {
@@ -284,7 +240,6 @@ router.get('/cards/:uuid', async (req, res) => {
       };
     }
 
-    // Main price aggregates object: prices.retail.normal, prices.buylist.foil, etc.
     const prices: Record<string, any> = {};
     for (const type of ['retail', 'buylist']) {
       prices[type] = {};
@@ -293,10 +248,6 @@ router.get('/cards/:uuid', async (req, res) => {
       }
     }
 
-    /**
-     * Find all dates for which we have any price (union of all vendors/finishes)
-     * Needed to build the price history chart array.
-     */
     function allDatesForFinish(prices: any, finish: string) {
       const dateSet = new Set<string>();
       for (const vendor of vendorNames) {
@@ -307,22 +258,16 @@ router.get('/cards/:uuid', async (req, res) => {
       }
       return Array.from(dateSet).sort();
     }
-    // Union of all dates across all finishes
     let allDatesSet = new Set<string>();
     for (const finish of allFinishes) {
       allDatesForFinish(card.prices, finish).forEach((date) => allDatesSet.add(date));
     }
     const allDates = Array.from(allDatesSet).sort();
 
-    /**
-     * Build a price history array: one entry per date, with avg retail/buylist price for each finish.
-     * Used for line graphs/charts in frontend.
-     */
     const history = allDates.map((date) => {
       const retail: any = {};
       const buylist: any = {};
       for (const finish of allFinishes) {
-        // For each finish, compute avg across all vendors for this day
         const retailVals = vendorNames
           .map((v) => (card.prices as any)?.[v]?.retail?.[finish]?.[date])
           .filter((x) =>
@@ -340,7 +285,6 @@ router.get('/cards/:uuid', async (req, res) => {
         retail[finish] = retailVals.length
           ? Number((retailVals.reduce((a, b) => a + b, 0) / retailVals.length).toFixed(2))
           : null;
-        // buylist same
         const buylistVals = vendorNames
           .map((v) => (card.prices as any)?.[v]?.buylist?.[finish]?.[date])
           .filter((x) =>
